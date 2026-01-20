@@ -6,7 +6,7 @@ import os
 # PATH
 # ============================================================
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PATH_SHP = os.path.join(BASE_DIR, "data", "raw", "DBSCL_Boundary.shp")
+PATH_SHP = os.path.join(BASE_DIR, "data", "raw", "DBSCL_Boundary_Clean.shp")
 
 print("📂 Đọc shapefile:", PATH_SHP)
 

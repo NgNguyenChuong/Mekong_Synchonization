@@ -13,7 +13,7 @@ DATA_RAW = os.path.join(BASE_DIR, "data", "raw")
 DATA_OUT = os.path.join(BASE_DIR, "data", "processed")
 
 # File đầu vào cụ thể (Sửa tên file khớp với máy bạn)
-PATH_SHP_BOUNDARY = os.path.join(DATA_RAW, "DBSCL_Boundary.shp")
+PATH_SHP_BOUNDARY = os.path.join(DATA_RAW, "DBSCL_Boundary_Clean.shp")
 PATH_DEM = os.path.join(DATA_RAW, "DEM_DBSCL.tif")
 PATH_LANDCOVER = os.path.join(DATA_RAW, "LAND_COVER.tif")
 PATH_WATER_CSV = os.path.join(DATA_RAW, "water_level.csv")
