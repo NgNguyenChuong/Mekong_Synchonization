@@ -25,7 +25,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 # 5. Export shapefile
 geemap.ee_export_vector(
     dbscl_fc,
-    filename=os.path.join(OUT_DIR, "DBSCL_Boundary.shp")
+    filename=os.path.join(OUT_DIR, "DBSCL_Boundary_LackCT.shp")
 )
 
 print("✅ Đã export shapefile ĐBSCL")

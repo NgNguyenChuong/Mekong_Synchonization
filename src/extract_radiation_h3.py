@@ -30,8 +30,8 @@ print(f"📁 Tìm thấy {len(radiation_map)} files")
 # EXTRACT
 # ============================================================
 records = []
-
-for (year, month), tif_path in radiation_map.items():
+sorted_items = sorted(radiation_map.items())
+for (year, month), tif_path in sorted_items:
     print(f"☀️  Radiation {year}-{month:02d}")
     
     # Sample với fallback strategy
