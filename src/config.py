@@ -20,8 +20,10 @@ PATH_WATER_CSV = os.path.join(DATA_RAW, "water_level.csv")
 
 # Thư mục chứa file ảnh động (ERA5/CHIRPS)
 DIR_RAIN = os.path.join(DATA_RAW, "daily_rain")
-DIR_TEMP = os.path.join(DATA_RAW, "daily_temp")
-HUMID_DIR = os.path.join(DATA_RAW, "daily_humid")
-RAD_DIR   = os.path.join(DATA_RAW, "daily_radiation")
+DIR_TEMP = os.path.join(DATA_RAW, "daily_temp_avg")
+DIR_HUMID = os.path.join(DATA_RAW, "daily_humid")
+DIR_SOLAR   = os.path.join(DATA_RAW, "daily_solar")
+DIR_TEMP_MAX = os.path.join(DATA_RAW, "daily_temp_max")
+DIR_TEMP_MIN = os.path.join(DATA_RAW, "daily_temp_min") 
 # Đảm bảo thư mục đầu ra tồn tại
 os.makedirs(DATA_OUT, exist_ok=True)

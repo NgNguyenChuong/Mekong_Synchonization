@@ -1,4 +1,4 @@
-# extract_radiation_h3.py
+# extract_temp_min_h3.py
 import os
 import pandas as pd
 from datetime import datetime, timedelta
@@ -9,33 +9,35 @@ from utils_h3 import index_files, load_h3_multipoints, sample_multiband_robust
 # ============================================================
 # PATH
 # ============================================================
-RADIATION_DIR = os.path.join(DATA_RAW, "daily_radiation")
+TEMP_DIR = os.path.join(DATA_RAW, "daily_temp_min")
 H3_GRID  = os.path.join(DATA_OUT, "h3_grid_dbscl.geojson")
-OUT_CSV  = os.path.join(DATA_OUT, "h3_radiation_daily.csv")
+OUT_CSV  = os.path.join(DATA_OUT, "h3_temp_min_daily.csv")              
 
 # ============================================================
 # LOAD H3 GRID + SAMPLE POINTS (7 điểm/cell)
 # ============================================================
 print("🔍 Load H3 grid và tạo sample points...")
-h3_ids, point_groups = load_h3_multipoints(H3_GRID, CRS_METRIC, CRS_WGS84)
+h3_ids, point_groups,h3_geoms = load_h3_multipoints(H3_GRID, CRS_METRIC, CRS_WGS84)
 print(f"✅ {len(h3_ids)} H3 cells × 7 points")
 
 # ============================================================
 # INDEX FILES
 # ============================================================
-radiation_map = index_files(RADIATION_DIR)
-print(f"📁 Tìm thấy {len(radiation_map)} files")
+temp_map = index_files(TEMP_DIR)
+print(f"📁 Tìm thấy {len(temp_map)} files")
 
 # ============================================================
 # EXTRACT
 # ============================================================
 records = []
-sorted_items = sorted(radiation_map.items())
+sorted_items = sorted(temp_map.items())
 for (year, month), tif_path in sorted_items:
-    print(f"☀️  Radiation {year}-{month:02d}")
+    print(f"🌡️  Temp {year}-{month:02d}")
     
     # Sample với fallback strategy
-    vals, nodata = sample_multiband_robust(tif_path, point_groups)
+    vals, nodata = sample_multiband_robust(tif_path, point_groups,
+    h3_geoms,
+    n_random=15)
     num_days = len(vals[0]) if vals and vals[0] else 0
     
     for d in range(num_days):
@@ -44,8 +46,9 @@ for (year, month), tif_path in sorted_items:
             records.append({
                 "h3_index": h3_id,
                 "date": date.strftime("%Y-%m-%d"),
-                "radiation": vals[i][d]  # None nếu không có data
+                "temp_min_c": vals[i][d]  # None nếu không có data
             })
+
 
 # ============================================================
 # SAVE
@@ -56,4 +59,4 @@ df.to_csv(OUT_CSV, index=False)
 print("\n✅ HOÀN TẤT")
 print(f"📄 File: {OUT_CSV}")
 print(f"📊 Tổng dòng: {len(df)}")
-print(f"⚠️  NoData: {df['radiation'].isna().sum()} ({df['radiation'].isna().mean()*100:.1f}%)")
+print(f"⚠️  NoData: {df['temp_min_c'].isna().sum()} ({df['temp_min_c'].isna().mean()*100:.1f}%)")

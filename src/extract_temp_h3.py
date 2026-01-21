@@ -9,7 +9,7 @@ from utils_h3 import index_files, load_h3_multipoints, sample_multiband_robust
 # ============================================================
 # PATH
 # ============================================================
-TEMP_DIR = os.path.join(DATA_RAW, "daily_temp")
+TEMP_DIR = os.path.join(DATA_RAW, "daily_temp_avg")
 H3_GRID  = os.path.join(DATA_OUT, "h3_grid_dbscl.geojson")
 OUT_CSV  = os.path.join(DATA_OUT, "h3_temp_daily.csv")
 
@@ -17,7 +17,7 @@ OUT_CSV  = os.path.join(DATA_OUT, "h3_temp_daily.csv")
 # LOAD H3 GRID + SAMPLE POINTS (7 điểm/cell)
 # ============================================================
 print("🔍 Load H3 grid và tạo sample points...")
-h3_ids, point_groups = load_h3_multipoints(H3_GRID, CRS_METRIC, CRS_WGS84)
+h3_ids, point_groups,h3_geoms = load_h3_multipoints(H3_GRID, CRS_METRIC, CRS_WGS84)
 print(f"✅ {len(h3_ids)} H3 cells × 7 points")
 
 # ============================================================
@@ -35,7 +35,9 @@ for (year, month), tif_path in sorted_items:
     print(f"🌡️  Temp {year}-{month:02d}")
     
     # Sample với fallback strategy
-    vals, nodata = sample_multiband_robust(tif_path, point_groups)
+    vals, nodata = sample_multiband_robust(tif_path, point_groups,
+    h3_geoms,
+    n_random=15)
     num_days = len(vals[0]) if vals and vals[0] else 0
     
     for d in range(num_days):
