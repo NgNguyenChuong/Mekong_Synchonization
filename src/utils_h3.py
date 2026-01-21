@@ -3,7 +3,8 @@ import os
 import re
 import rasterio
 import geopandas as gpd
-
+import random
+from shapely.geometry import Point
 
 def parse_year_month(fname):
     """Parse năm-tháng từ tên file"""
@@ -70,7 +71,7 @@ def load_h3_multipoints(h3_path, crs_metric, crs_wgs84):
     h3_ids = h3["h3_index"].tolist()
     point_groups = [get_h3_sample_points(geom) for geom in h3_wgs.geometry]
     
-    return h3_ids, point_groups
+    return h3_ids, point_groups, list(h3_wgs.geometry)
 
 
 def sample_multiband(tif_path, points):
@@ -98,58 +99,80 @@ def is_nodata(value, nodata):
         return math.isclose(float(value), float(nodata), rel_tol=1e-9, abs_tol=1e-9)
     except (ValueError, TypeError):
         return value == nodata
-
-
-def sample_multiband_robust(tif_path, point_groups):
+def random_points_in_polygon(poly, n):
     """
-    Sample robust với fallback strategy:
-    - Thử centroid trước (điểm đầu tiên)
-    - Nếu fail/nodata → lấy trung bình 6 điểm còn lại
-    
-    Args:
-        tif_path: đường dẫn file GeoTIFF
-        point_groups: list of list [(x,y), ...] - 7 điểm cho mỗi H3 cell
-    
-    Returns:
-        vals: list of list - vals[h3_idx][band_idx] or None
-        nodata: giá trị nodata của raster
+    Sinh n điểm ngẫu nhiên nằm trong polygon
     """
+    minx, miny, maxx, maxy = poly.bounds
+    points = []
+
+    while len(points) < n:
+        p = Point(
+            random.uniform(minx, maxx),
+            random.uniform(miny, maxy)
+        )
+        if poly.contains(p):
+            points.append((p.x, p.y))
+    return points
+
+def sample_multiband_robust(
+    tif_path,
+    point_groups,
+    h3_geoms=None,
+    n_random=10
+):
     with rasterio.open(tif_path) as src:
         nodata = src.nodata
         num_bands = src.count
         num_cells = len(point_groups)
-        
-        # Khởi tạo matrix kết quả
+
         vals = [[None] * num_bands for _ in range(num_cells)]
-        
-        # Sample từng band
+
         for band_idx in range(num_bands):
             for i, points in enumerate(point_groups):
-                # Strategy 1: Thử centroid trước
+
+                # -------- Strategy 1: centroid --------
                 try:
                     v = next(src.sample([points[0]], indexes=band_idx + 1))[0]
                     if not is_nodata(v, nodata):
                         vals[i][band_idx] = float(v)
                         continue
-                except Exception:
+                except:
                     pass
-                
-                # Strategy 2: Fallback - trung bình 6 điểm còn lại
+
+                # -------- Strategy 2: 6 midpoint --------
                 valid_vals = []
                 for pt in points[1:]:
                     try:
                         v = next(src.sample([pt], indexes=band_idx + 1))[0]
                         if not is_nodata(v, nodata):
                             valid_vals.append(v)
-                    except Exception:
-                        continue
-                
-                # Tính trung bình nếu có ít nhất 1 điểm valid
+                    except:
+                        pass
+
                 if valid_vals:
                     vals[i][band_idx] = float(sum(valid_vals) / len(valid_vals))
-        
+                    continue
+
+                # -------- Strategy 3: random in H3 --------
+                if h3_geoms is not None:
+                    rand_pts = random_points_in_polygon(h3_geoms[i], n_random)
+                    rand_vals = []
+                    for pt in rand_pts:
+                        try:
+                            v = next(src.sample([pt], indexes=band_idx + 1))[0]
+                            if not is_nodata(v, nodata):
+                                rand_vals.append(v)
+                        except:
+                            pass
+
+                    if rand_vals:
+                        vals[i][band_idx] = float(sum(rand_vals) / len(rand_vals))
+
         return vals, nodata
-    
+
+
+
 # Test ở cuối file utils_h3.py
 if __name__ == "__main__":
     # Test nodata detection

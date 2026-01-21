@@ -114,7 +114,7 @@ from config import (
 # CONFIG PATHS
 # ============================================================
 PATH_H3_GRID = os.path.join(DATA_OUT, "h3_grid_dbscl.geojson")
-PATH_TEMP_CSV = os.path.join(DATA_OUT, "h3_humid_daily.csv") # File CSV nhiệt độ
+PATH_TEMP_CSV = os.path.join(DATA_OUT, "h3_solar_daily_filled_spatial.csv") # File CSV nhiệt độ
 
 print("📂 Boundary:", PATH_SHP_BOUNDARY)
 print("📂 H3 grid :", PATH_H3_GRID)
@@ -139,8 +139,8 @@ print(f"✅ CSV Rows         : {len(df_temp)}")
 # ============================================================
 # 2. TÌM NODATA CELLS
 # ============================================================
-# Lọc các dòng có temp_c là NaN (trống)
-df_missing = df_temp[df_temp['humid'].isna()]
+# Lọc các dòng có solar là NaN (trống)
+df_missing = df_temp[df_temp['solar'].isna()]
 
 # Lấy danh sách các h3_index duy nhất bị lỗi
 nodata_indices = df_missing['h3_index'].unique()
