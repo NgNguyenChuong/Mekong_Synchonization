@@ -6,8 +6,7 @@ from config import (
 )
 from utils_h3 import load_h3_multipoints
 from preprocessing import run_preprocessing
-from processing import process_single_dataset  # Import hàm worker mới
-
+from processing import process_single_dataset, merge_all_datasets # <--- Thêm merge_all_datasets
 def main():
     start_time = time.time()
     print("==================================================")
@@ -50,6 +49,11 @@ def main():
     with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
         # Map hàm worker với danh sách tasks
         results = list(executor.map(process_single_dataset, tasks))
+    
+    # --- MERGE CSV ---
+    print("\n[STEP 3] Merging all datasets...")
+    merge_all_datasets()
+    # ---------------------
 
     print("\n==================================================")
     print(f"✅ PIPELINE FINISHED in {time.time() - start_time:.1f} seconds")
