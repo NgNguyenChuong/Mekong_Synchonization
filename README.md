@@ -1,4 +1,4 @@
-﻿# H3 Geo Pipeline (Generalized)
+# H3 Geo Pipeline (Generalized)
 
 This project converts daily raster climate data into H3 time series for any region.
 
@@ -7,33 +7,35 @@ The workflow is now generalized:
 - You can place your own raster datasets in `data/raw/<dataset_folder>`.
 - Run `src/pipeline.py` to generate:
 `data/processed/h3_grid.geojson` and per-dataset H3 CSV outputs.
+
 ## 0. Setup environment
 
-⚠️ Lưu ý quan trọng (Important Notes)
-Phiên bản Python: Dự án này được khuyến nghị chạy trên Python 3.13.5. Vui lòng đảm bảo máy tính của bạn đã cài đặt đúng phiên bản này để tránh các lỗi không tương thích.
+Recommended Python version: `3.13.5`
 
-Môi trường ảo (Virtual Environment): Khuyên dùng môi trường ảo để quản lý các thư viện độc lập và tránh xung đột hệ thống.
+Using a virtual environment is strongly recommended to avoid dependency conflicts.
 
-🛠 Hướng dẫn cài đặt môi trường
-Tạo môi trường ảo:
-Mở terminal tại thư mục dự án và chạy lệnh sau:
+Create virtual environment:
 
-Bash
+```bash
 # Windows
-python -m venv venv
+python -m venv env
 
 # macOS/Linux
-python3 -m venv venv
-Kích hoạt môi trường ảo:
+python3 -m venv env
+```
 
-Windows:
+Activate virtual environment:
 
-Bash
-.\venv\Scripts\activate
-macOS/Linux:
+```bash
+# Windows (PowerShell)
+.\env\Scripts\Activate.ps1
 
-Bash
-source venv/bin/activate
+# Windows (CMD)
+env\Scripts\activate.bat
+
+# macOS/Linux
+source env/bin/activate
+```
 
 ## 1. Install
 
