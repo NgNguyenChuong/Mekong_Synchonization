@@ -6,83 +6,129 @@ import h3
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 from config import (
-    GEE_PROJECT, MEKONG_PROVINCES, SHAPEFILE_RAW, SHAPEFILE_CLEAN,
+    GEE_PROJECT, GEE_TARGET_AREAS, GEE_ADMIN_COLLECTION, GEE_ADMIN_NAME_FIELD,
+    ENABLE_GEE_FALLBACK, DATA_RAW, SHAPEFILE_RAW, SHAPEFILE_CLEAN,
     CRS_METRIC, CRS_WGS84, MIN_ISLAND_AREA_KM2,
     H3_GRID_GEOJSON, H3_RESOLUTION, BUFFER_DIST
 )
 
 # -----------------------------------------------------------
-# 1. DOWNLOAD SHAPEFILE FROM GEE
+# 1. INPUT SHAPEFILE RESOLUTION
+# -----------------------------------------------------------
+def _find_shapefiles_in_raw():
+    if not os.path.exists(DATA_RAW):
+        return []
+    return sorted(
+        os.path.join(DATA_RAW, f)
+        for f in os.listdir(DATA_RAW)
+        if f.lower().endswith(".shp")
+    )
+
+
+def _resolve_input_shapefile():
+    candidates = _find_shapefiles_in_raw()
+    if len(candidates) == 1:
+        selected = candidates[0]
+        print(f"   ✅ Using input shapefile: {selected}")
+        return selected
+    if len(candidates) > 1:
+        names = "\n      - " + "\n      - ".join(candidates)
+        raise ValueError(
+            "Multiple shapefiles found in data/raw. "
+            "Keep exactly one .shp before running pipeline:" + names
+        )
+
+    if ENABLE_GEE_FALLBACK:
+        return download_shapefile_gee()
+
+    raise FileNotFoundError(
+        "No input shapefile found. Add exactly one .shp to data/raw. "
+        "If needed, enable GEE fallback with ENABLE_GEE_FALLBACK=true."
+    )
+
+
+# -----------------------------------------------------------
+# 2. DOWNLOAD SHAPEFILE FROM GEE (OPTIONAL FALLBACK)
 # -----------------------------------------------------------
 def download_shapefile_gee():
-    if os.path.exists(SHAPEFILE_RAW):
-        print(f"   ✅ Raw shapefile already exists: {SHAPEFILE_RAW}")
-        return
-
     print("   🌍 Authenticating & Initializing GEE...")
-    try:
-        ee.Initialize(project=GEE_PROJECT)
-    except Exception:
-        print("   ⚠️  GEE Init failed. Trying generic ee.Initialize()...")
+    if GEE_PROJECT:
+        try:
+            ee.Initialize(project=GEE_PROJECT)
+        except Exception:
+            print("   ⚠️  GEE Init with project failed. Trying generic ee.Initialize()...")
+            ee.Initialize()
+    else:
         ee.Initialize()
 
-    print("   ⬇️  Downloading Mekong Delta boundary...")
-    vietnam = ee.FeatureCollection("FAO/GAUL/2015/level1")
-    dbscl_fc = vietnam.filter(ee.Filter.inList('ADM1_NAME', MEKONG_PROVINCES))
+    print("   ⬇️  Downloading boundary from GEE...")
+    if not GEE_TARGET_AREAS:
+        raise ValueError("GEE fallback requires at least one name in GEE_TARGET_AREAS.")
 
-    geemap.ee_export_vector(dbscl_fc, filename=SHAPEFILE_RAW)
-    print(f"   ✅ Downloaded to: {SHAPEFILE_RAW}")
+    admin_fc = ee.FeatureCollection(GEE_ADMIN_COLLECTION)
+    target_fc = admin_fc.filter(ee.Filter.inList(GEE_ADMIN_NAME_FIELD, GEE_TARGET_AREAS))
+
+    geemap.ee_export_vector(target_fc, filename=SHAPEFILE_RAW)
+    print(f"   ✅ Downloaded boundary to: {SHAPEFILE_RAW}")
+    return SHAPEFILE_RAW
 
 
 # -----------------------------------------------------------
-# 2. CLEAN SHAPEFILE (REMOVE SMALL ISLANDS)
+# 3. CLEAN SHAPEFILE (REMOVE SMALL ISLANDS)
 # -----------------------------------------------------------
-def clean_shapefile():
-    if os.path.exists(SHAPEFILE_CLEAN):
+def clean_shapefile(input_shapefile):
+    if os.path.exists(SHAPEFILE_CLEAN) and os.path.getmtime(SHAPEFILE_CLEAN) >= os.path.getmtime(input_shapefile):
         print(f"   ✅ Cleaned shapefile already exists: {SHAPEFILE_CLEAN}")
-        return
+        return SHAPEFILE_CLEAN
 
     print("   🧹 Cleaning shapefile (removing small islands)...")
-    
-    if not os.path.exists(SHAPEFILE_RAW):
-        raise FileNotFoundError(f"❌ Raw shapefile missing: {SHAPEFILE_RAW}")
+    if not os.path.exists(input_shapefile):
+        raise FileNotFoundError(f"❌ Input shapefile missing: {input_shapefile}")
 
-    gdf = gpd.read_file(SHAPEFILE_RAW)
+    gdf = gpd.read_file(input_shapefile)
     gdf_metric = gdf.to_crs(CRS_METRIC)
-    
+
     gdf_exploded = gdf_metric.explode(index_parts=True).reset_index(drop=True)
     gdf_exploded['area_km2'] = gdf_exploded.geometry.area / 1e6
-    
-    gdf_clean = gdf_exploded[gdf_exploded['area_km2'] > MIN_ISLAND_AREA_KM2].copy()
+
+    if MIN_ISLAND_AREA_KM2 > 0:
+        gdf_clean = gdf_exploded[gdf_exploded['area_km2'] > MIN_ISLAND_AREA_KM2].copy()
+    else:
+        gdf_clean = gdf_exploded.copy()
+
     gdf_final = gdf_clean.dissolve().to_crs(CRS_WGS84)
     
     gdf_final.to_file(SHAPEFILE_CLEAN)
     print(f"   ✅ Cleaned shapefile saved: {SHAPEFILE_CLEAN}")
+    return SHAPEFILE_CLEAN
 
 
 # -----------------------------------------------------------
-# 3. GENERATE H3 GRID (Fixed API: h3.LatLngPoly)
+# 4. GENERATE H3 GRID (Fixed API: h3.LatLngPoly)
 # -----------------------------------------------------------
-def generate_h3_grid():
-    if os.path.exists(H3_GRID_GEOJSON):
+def generate_h3_grid(clean_shapefile_path):
+    if os.path.exists(H3_GRID_GEOJSON) and os.path.getmtime(H3_GRID_GEOJSON) >= os.path.getmtime(clean_shapefile_path):
         print(f"   ✅ H3 Grid already exists: {H3_GRID_GEOJSON}")
         return
 
     print("   HEX Generating H3 Grid (v4)...")
-    
-    if not os.path.exists(SHAPEFILE_CLEAN):
-        raise FileNotFoundError(f"❌ Cleaned shapefile missing: {SHAPEFILE_CLEAN}")
 
-    gdf = gpd.read_file(SHAPEFILE_CLEAN).to_crs(CRS_WGS84)
+    if not os.path.exists(clean_shapefile_path):
+        raise FileNotFoundError(f"❌ Cleaned shapefile missing: {clean_shapefile_path}")
+
+    gdf = gpd.read_file(clean_shapefile_path).to_crs(CRS_WGS84)
     
     # Tạo buffer để bao phủ rìa biển
-    gdf_metric = gdf.to_crs(CRS_METRIC)
-    gdf_buffered = gdf_metric.buffer(BUFFER_DIST).to_crs(CRS_WGS84)
+    if BUFFER_DIST > 0:
+        gdf_metric = gdf.to_crs(CRS_METRIC)
+        buffered_geoms = gdf_metric.buffer(BUFFER_DIST).to_crs(CRS_WGS84)
+    else:
+        buffered_geoms = gdf.geometry
 
     hex_set = set()
 
     # Loop qua từng geometry
-    for geom in gdf_buffered.geometry:
+    for geom in buffered_geoms:
         geoms = geom.geoms if geom.geom_type == "MultiPolygon" else [geom]
         
         for g in geoms:
@@ -144,7 +190,7 @@ def generate_h3_grid():
 # -----------------------------------------------------------
 def run_preprocessing():
     print("--- [PREPROCESSING] ---")
-    download_shapefile_gee()
-    clean_shapefile()
-    generate_h3_grid()
+    input_shapefile = _resolve_input_shapefile()
+    clean_shapefile_path = clean_shapefile(input_shapefile)
+    generate_h3_grid(clean_shapefile_path)
     print("-----------------------")
