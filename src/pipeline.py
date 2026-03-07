@@ -2,11 +2,13 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor
 from config import (
-    DATA_SPECS, H3_GRID_GEOJSON, CRS_METRIC, CRS_WGS84
+    DATA_SPECS, H3_GRID_GEOJSON, CRS_METRIC, CRS_WGS84, DATA_RAW
 )
 from utils_h3 import load_h3_multipoints
 from preprocessing import run_preprocessing
-from processing import process_single_dataset, merge_all_datasets # <--- Thêm merge_all_datasets
+from processing import process_single_dataset, merge_all_datasets
+
+
 def main():
     start_time = time.time()
     print("==================================================")
@@ -37,14 +39,20 @@ def main():
     # Mỗi worker cần: key, config của key đó, và dữ liệu grid
     tasks = []
     for key, spec in DATA_SPECS.items():
-        # Kiểm tra folder input có tồn tại không trước khi đưa vào queue
-        # (Để tránh lỗi vặt)
+        input_dir = os.path.join(DATA_RAW, spec["folder"])
+        if not os.path.exists(input_dir):
+            print(f"⚠️ [Skip] {key.upper()} - folder not found: {input_dir}")
+            continue
         tasks.append((key, spec, h3_data_bundle))
+
+    if not tasks:
+        print("❌ No valid dataset folders found. Nothing to process.")
+        return
 
     # SỐ LUỒNG TỐI ĐA (max_workers)
     # Nếu máy bạn 8 core, để 4-6 là đẹp. Nếu RAM yếu thì giảm xuống.
     # Mặc định None = số core của máy.
-    MAX_WORKERS = os.cpu_count() - 1  # Chừa 1 core cho hệ thống
+    MAX_WORKERS = max(1, (os.cpu_count() or 1) - 1)  # Leave one core for system
     
     with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
         # Map hàm worker với danh sách tasks
