@@ -61,8 +61,8 @@ MIN_ISLAND_AREA_KM2 = _env_float("MIN_ISLAND_AREA_KM2", 0.0)
 H3_RESOLUTION = _env_int("H3_RESOLUTION", 7)
 
 # GEE fallback settings (disabled by default).
-ENABLE_GEE_FALLBACK = _env_bool("ENABLE_GEE_FALLBACK", False)
-GEE_PROJECT = os.getenv("GEE_PROJECT", "").strip()
+ENABLE_GEE_FALLBACK = _env_bool("ENABLE_GEE_FALLBACK", True)
+GEE_PROJECT = 'hakathon-480615' #os.getenv("GEE_PROJECT", "").strip()
 GEE_ADMIN_COLLECTION = os.getenv("GEE_ADMIN_COLLECTION", "FAO/GAUL/2015/level1").strip()
 GEE_ADMIN_NAME_FIELD = os.getenv("GEE_ADMIN_NAME_FIELD", "ADM1_NAME").strip()
 
@@ -137,6 +137,84 @@ def load_data_specs():
 
 
 DATA_SPECS = load_data_specs()
+
+# ============================================================
+# STATIC FEATURES SPECIFICATIONS (BIẾN TĨNH)
+# ============================================================
+
+DEFAULT_STATIC_SPECS = {
+    "dem": {
+        "folder": "dem",
+        "file": "DEM_DBSCL.tif",
+        "col_name": "dem_mean",
+        "output_file": "h3_dem.csv",
+        "method": "mean"  # Phương pháp tính (mean, max, min...)
+    },
+    "landcover": {
+        "folder": "landcover",
+        "file": "LandCover_DBSCL_2021.tif",
+        "col_name": "landcover_class",
+        "output_file": "h3_landcover.csv",
+        "method": "all_classes"  ,
+        "class_names": {
+            10: "Trees",        # Cây cối / Rừng thông thường
+            20: "Shrubland",    # Cây bụi
+            30: "Grassland",    # Đồng cỏ
+            40: "Cropland",     # Đất nông nghiệp (Lúa, hoa màu...)
+            50: "Built_up",     # Đô thị / Khu dân cư
+            60: "Bareland",     # Đất trống
+            80: "Water",        # Nước (Sông, hồ, biển)
+            90: "Wetland",      # Đất ngập nước (Đầm lầy cỏ)
+            95: "Mangroves"     # Rừng ngập mặn (Đặc trưng vùng ven biển ĐBSCL)
+        }
+    },
+    "river": {
+        "folder": "river",
+        "file": "River_DBSCL.tif",
+        "col_name": "river_proximity",
+        "output_file": "h3_river.csv",
+        "method": "min_distance"  # Tính khoảng cách đến sông gần nhất
+    }
+
+}
+STATIC_SPECS_OVERRIDE_FILE = os.path.join(DATA_RAW, "static_specs.json")
+
+def load_static_specs():
+    """Load cấu hình biến tĩnh từ file JSON nếu có, không thì dùng Default"""
+    if not os.path.exists(STATIC_SPECS_OVERRIDE_FILE):
+        return DEFAULT_STATIC_SPECS
+
+    try:
+        with open(STATIC_SPECS_OVERRIDE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        raise ValueError(f"Invalid static spec file: {STATIC_SPECS_OVERRIDE_FILE}. Error: {exc}") from exc
+
+    if not isinstance(data, dict) or not data:
+        raise ValueError(f"{STATIC_SPECS_OVERRIDE_FILE} must be a non-empty object.")
+
+    # Chú ý: Biến tĩnh yêu cầu trường 'file' thay vì chỉ 'folder'
+    required_fields = {"folder", "file", "col_name", "output_file"}
+    
+    for key, spec in data.items():
+        if not isinstance(spec, dict):
+            raise ValueError(f"Static Dataset '{key}' must be an object.")
+        
+        missing = required_fields - set(spec.keys())
+        if missing:
+            raise ValueError(f"Static Dataset '{key}' is missing required fields: {sorted(missing)}")
+            
+        # Gán giá trị mặc định cho method nếu người dùng không điền trong file JSON
+        if "method" not in spec:
+            spec["method"] = "mean"
+
+    return data
+
+# Gọi hàm để khởi tạo cấu hình
+STATIC_SPECS = load_static_specs()
+
+
+
 
 FILL_CONFIG = {
     "MAX_K": 3,
