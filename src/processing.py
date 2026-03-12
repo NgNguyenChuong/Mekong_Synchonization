@@ -2,10 +2,13 @@ import os
 import pandas as pd
 import numpy as np
 import h3
+import rasterio
+import geopandas as gpd
+from rasterstats import zonal_stats
 from scipy.spatial import cKDTree
 from datetime import datetime, timedelta
 from utils_h3 import index_files, sample_multiband_robust
-from config import FILL_CONFIG, DATA_PROCESSED, DATA_RAW
+from config import FILL_CONFIG, DATA_PROCESSED, DATA_RAW,DATA_SPECS, STATIC_SPECS
 
 # ---------------------------------------------------------
 # CORE LOGIC: EXTRACT
@@ -215,7 +218,7 @@ def process_single_dataset(args):
 # ---------------------------------------------------------
 from config import DATA_SPECS, DATA_PROCESSED
 
-def merge_all_datasets():
+def merge_dynamic_datasets():
     """
     Gộp tất cả các file CSV thành phần (Mưa, Nhiệt, Ẩm...) thành 1 file tổng.
     Join key: ['h3_index', 'date']
@@ -271,3 +274,153 @@ def merge_all_datasets():
     except Exception as e:
         print(f"❌ [Error] Lỗi khi gộp file: {e}")
         return None
+
+
+
+def extract_static_generic(spec_name, spec_config, h3_data_bundle, raw_root_dir):
+    h3_ids, _, h3_geoms = h3_data_bundle
+    
+    folder_path = os.path.join(raw_root_dir, spec_config["folder"])
+    file_path = os.path.join(folder_path, spec_config["file"])
+    col_name = spec_config["col_name"]
+    method = spec_config.get("method", "mean")
+
+    if not os.path.exists(file_path):
+        print(f"⚠️ Không tìm thấy file: {file_path}")
+        return pd.DataFrame()
+
+    gdf = gpd.GeoDataFrame({"h3_index": h3_ids}, geometry=h3_geoms, crs="EPSG:4326")
+
+    # -------------------------------------------------------------
+    # LOGIC 1: Lấy TẤT CẢ các lớp dưới dạng Tỷ lệ % (Fraction) VÀ GHI TÊN
+    # -------------------------------------------------------------
+    if method == "all_classes":
+        print(f"   🌱 Đang tính toán tỷ lệ % cho tất cả các lớp {col_name}...")
+        stats = zonal_stats(gdf, file_path, categorical=True)
+        
+        # Lấy từ điển dịch tên class từ config (nếu không có thì trả về dict rỗng)
+        class_map = spec_config.get("class_names", {})
+        
+        records = []
+        for s in stats:
+            if not s: 
+                records.append({})
+            else:
+                total_pixels = sum(s.values())
+                row_data = {}
+                for k, v in s.items():
+                    # Tìm tên trong từ điển. Nếu file có mã lạ (ví dụ 99) mà chưa cấu hình, nó sẽ để tên là "99"
+                    class_name = class_map.get(int(k), str(int(k)))
+                    
+                    # Tạo tên cột, ví dụ: "landcover_Water", "landcover_Rice"
+                    column_key = f"{col_name}_{class_name}"
+                    
+                    row_data[column_key] = round(v / total_pixels, 4)
+                records.append(row_data)
+                
+        df_out = pd.DataFrame(records)
+        df_out = df_out.fillna(0) 
+        df_out["h3_index"] = h3_ids
+        
+        cols = ["h3_index"] + [c for c in df_out.columns if c != "h3_index"]
+        return df_out[cols]
+
+    # -------------------------------------------------------------
+    # LOGIC 2: Tính khoảng cách ngắn nhất đến sông (River Proximity)
+    # -------------------------------------------------------------
+    elif method == "min_distance":
+        print(f"   🌊 Đang tính toán khoảng cách đến sông gần nhất...")
+        with rasterio.open(file_path) as src:
+            data = src.read(1)
+            nodata = src.nodata
+            
+            # Lọc ra các pixel là sông (Giả sử sông có giá trị > 0)
+            if nodata is not None:
+                river_mask = (data > 0) & (data != nodata)
+            else:
+                river_mask = (data > 0)
+                
+            # Lấy tọa độ (row, col) của các pixel sông
+            rows, cols = np.where(river_mask)
+            
+            if len(rows) == 0:
+                print("   ⚠️ Lỗi: Không có pixel sông nào trong file TIF.")
+                vals = [np.nan] * len(h3_ids)
+            else:
+                # Chuyển đổi từ (row, col) sang hệ tọa độ bản đồ (X, Y)
+                xs, ys = rasterio.transform.xy(src.transform, rows, cols)
+                river_coords = np.column_stack((xs, ys))
+                
+                # Tạo cây KDTree để tìm kiếm khoảng cách cực nhanh
+                tree = cKDTree(river_coords)
+                
+                # Lấy tọa độ tâm của các ô lưới H3
+                centroids = gdf.geometry.centroid
+                h3_coords = np.column_stack((centroids.x, centroids.y))
+                
+                # Query khoảng cách ngắn nhất từ mỗi tâm H3 đến điểm sông gần nhất
+                dists, _ = tree.query(h3_coords)
+                
+                # Quy đổi đơn vị: 
+                # Nếu bản đồ là độ (EPSG:4326), 1 độ ~ 111.32 km.
+                # Nếu bản đồ là mét (UTM), chia 1000 ra km.
+                if src.crs and src.crs.is_geographic:
+                    vals = dists * 111.32 
+                else:
+                    vals = dists / 1000.0
+                    
+        print(f"   ✅ Đã tính xong khoảng cách sông (Trung bình: {np.nanmean(vals):.2f} km)")
+
+    # -------------------------------------------------------------
+    # LOGIC 3: Zonal Stats cơ bản (mean, max, min cho DEM...)
+    # -------------------------------------------------------------
+    else:
+        stats = zonal_stats(gdf, file_path, stats=method)
+        vals = [s[method] if s[method] is not None else np.nan for s in stats]
+
+    return pd.DataFrame({
+        "h3_index": h3_ids,
+        col_name: vals
+    })
+
+def process_single_static_dataset(args):
+    """Worker chạy từng biến tĩnh độc lập."""
+    key, spec, h3_data_bundle = args
+    print(f"🚀 [Start] STATIC {key.upper()} processing...")
+    
+    try:
+        df = extract_static_generic(key, spec, h3_data_bundle, DATA_RAW)
+        if df.empty:
+            print(f"⚠️ [Skip] STATIC {key.upper()} - Không tìm thấy file {spec['file']}.")
+            return key
+            
+        out_path = os.path.join(DATA_PROCESSED, spec["output_file"])
+        df.to_csv(out_path, index=False)
+        print(f"✅ [Done] STATIC {key.upper()} saved.")
+        
+    except Exception as e:
+        print(f"❌ [Error] STATIC {key.upper()}: {e}")
+        
+    return key
+
+def merge_static_datasets():
+    """Gộp các file tĩnh riêng lẻ thành file DIM_H3_STATIC.csv.
+    JOIN key: h3_index"""
+    print("\n🔄 [MERGE-STATIC] Bắt đầu gộp các file dữ liệu tĩnh...")
+    dfs = []
+    
+    for key, spec in STATIC_SPECS.items():
+        file_path = os.path.join(DATA_PROCESSED, spec["output_file"])
+        if os.path.exists(file_path):
+            print(f"   📖 Reading {key}...")
+            df = pd.read_csv(file_path, dtype={'h3_index': str})
+            df = df.set_index('h3_index')
+            dfs.append(df)
+            
+    if dfs:
+        final_static_df = pd.concat(dfs, axis=1, join='outer').reset_index()
+        out_path = os.path.join(DATA_PROCESSED, "DIM_H3_STATIC.csv")
+        final_static_df.to_csv(out_path, index=False)
+        print(f"✅ [DONE] Đã lưu bảng danh mục tĩnh tại: {out_path} ({final_static_df.shape})")
+    else:
+        print("❌ Không có dữ liệu tĩnh nào để gộp.")

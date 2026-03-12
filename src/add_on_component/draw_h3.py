@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 
 import geopandas as gpd
 import matplotlib.patches as mpatches
@@ -7,187 +8,157 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from config import CRS_WGS84, DATA_PROCESSED, DATA_SPECS, H3_GRID_GEOJSON, SHAPEFILE_CLEAN
-
-
-def _default_csv_path():
-    for key in ("solar", "rain", "temp_avg", "temp_max", "temp_min", "humidity"):
-        spec = DATA_SPECS.get(key)
-        if spec:
-            return os.path.join(DATA_PROCESSED, spec["output_file"])
-
-    if DATA_SPECS:
-        first = next(iter(DATA_SPECS.values()))
-        return os.path.join(DATA_PROCESSED, first["output_file"])
-
-    raise ValueError("DATA_SPECS is empty. Please configure dataset specs before plotting.")
+# Load các đường dẫn từ config
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(root_dir)
+from config import CRS_WGS84, DATA_PROCESSED, H3_GRID_GEOJSON, SHAPEFILE_CLEAN
 
 
 def _guess_value_column(df):
     excluded = {"h3_index", "date"}
     candidates = [c for c in df.columns if c not in excluded]
     if not candidates:
-        raise ValueError(
-            "Cannot detect value column. CSV must contain at least one data column besides 'h3_index' and 'date'."
-        )
+        raise ValueError("Cannot detect value column in CSV.")
     return candidates[0]
 
 
-def load_inputs(boundary_path, grid_path, csv_path):
-    if not os.path.exists(boundary_path):
-        raise FileNotFoundError(f"Boundary file not found: {boundary_path}")
-    if not os.path.exists(grid_path):
-        raise FileNotFoundError(f"H3 grid file not found: {grid_path}")
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"CSV file not found: {csv_path}")
-
+def load_inputs(boundary_path, grid_path, dyn_csv_path, stat_csv_path):
+    print("⏳ Đang tải bản đồ ranh giới và lưới H3...")
     boundary = gpd.read_file(boundary_path).to_crs(CRS_WGS84)
     h3_grid = gpd.read_file(grid_path).to_crs(CRS_WGS84)
+    h3_grid["h3_index"] = h3_grid["h3_index"].astype(str)
 
-    if "h3_index" not in h3_grid.columns:
-        raise ValueError("H3 grid must contain 'h3_index' column.")
+    # Đọc dữ liệu Động
+    print(f"📖 Đang đọc dữ liệu Động: {os.path.basename(dyn_csv_path)}")
+    if not os.path.exists(dyn_csv_path):
+        raise FileNotFoundError(f"Không tìm thấy file: {dyn_csv_path}")
+    df_dyn = pd.read_csv(dyn_csv_path, dtype={"h3_index": str})
 
-    df = pd.read_csv(csv_path, dtype={"h3_index": str})
-    if "h3_index" not in df.columns:
-        raise ValueError("CSV must contain 'h3_index' column.")
+    # Đọc dữ liệu Tĩnh
+    print(f"📖 Đang đọc dữ liệu Tĩnh: {os.path.basename(stat_csv_path)}")
+    if not os.path.exists(stat_csv_path):
+        raise FileNotFoundError(f"Không tìm thấy file: {stat_csv_path}")
+    df_stat = pd.read_csv(stat_csv_path, dtype={"h3_index": str})
 
-    return boundary, h3_grid, df
+    return boundary, h3_grid, df_dyn, df_stat
 
 
 def build_nodata_index(df, value_col, date_filter=None):
     df = df.copy()
-    df[value_col] = df[value_col].replace(-9999.0, np.nan)
+    df[value_col] = df[value_col].replace([-9999.0, "-9999", -9999, None], np.nan)
 
-    if date_filter:
-        if "date" not in df.columns:
-            raise ValueError("date_filter was provided but CSV has no 'date' column.")
+    if date_filter and "date" in df.columns:
         df = df[df["date"] == date_filter]
 
     missing = df[df[value_col].isna()]
     return set(missing["h3_index"].astype(str).unique())
 
 
-def plot_nodata(boundary, h3_grid, nodata_h3, value_col, date_filter=None, save_path=None, show=True):
-    h3_grid = h3_grid.copy()
-    h3_grid["h3_index"] = h3_grid["h3_index"].astype(str)
-
+def _draw_map(ax, boundary, h3_grid, nodata_h3, title):
+    """Hàm vẽ bản đồ con lên một trục (Axis) cụ thể"""
     h3_nodata = h3_grid[h3_grid["h3_index"].isin(nodata_h3)]
     h3_valid = h3_grid[~h3_grid["h3_index"].isin(nodata_h3)]
 
-    total_cells = len(h3_grid)
-    num_nodata = len(h3_nodata)
-    pct = (num_nodata / total_cells * 100.0) if total_cells else 0.0
+    total = len(h3_grid)
+    missing = len(h3_nodata)
+    pct = (missing / total * 100.0) if total else 0.0
 
-    fig, ax = plt.subplots(figsize=(12, 12))
-
-    boundary.plot(
-        ax=ax,
-        facecolor="#f5f5f5",
-        edgecolor="black",
-        linewidth=1.0,
-        alpha=0.8,
-    )
+    boundary.plot(ax=ax, facecolor="#f5f5f5", edgecolor="black", linewidth=1.0, alpha=0.8)
 
     if not h3_valid.empty:
-        h3_valid.plot(
-            ax=ax,
-            facecolor="none",
-            edgecolor="#2E8B57",
-            linewidth=0.15,
-            alpha=0.4,
-        )
+        h3_valid.plot(ax=ax, facecolor="none", edgecolor="#2E8B57", linewidth=0.15, alpha=0.4)
 
     if not h3_nodata.empty:
-        h3_nodata.plot(
-            ax=ax,
-            facecolor="#D32F2F",
-            edgecolor="#7F1D1D",
-            linewidth=0.4,
-            alpha=0.85,
-        )
+        h3_nodata.plot(ax=ax, facecolor="#D32F2F", edgecolor="#7F1D1D", linewidth=0.4, alpha=0.85)
 
-    subtitle = f"metric={value_col}"
-    if date_filter:
-        subtitle += f" | date={date_filter}"
-
-    ax.set_title(
-        f"H3 NoData Check\nTotal={total_cells} | Missing={num_nodata} ({pct:.2f}%) | {subtitle}",
-        fontsize=13,
-    )
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
+    ax.set_title(f"{title}\nTotal={total} | Missing={missing} ({pct:.2f}%)", fontsize=12)
     ax.set_aspect("equal")
+    ax.set_xticks([])
+    ax.set_yticks([])
 
+
+def plot_dual_nodata(boundary, h3_grid, nodata_dyn, col_dyn, date_dyn, nodata_stat, col_stat, save_path=None, show=True):
+    # Tạo 1 Figure với 2 Subplots (1 hàng, 2 cột)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+    fig.suptitle("H3 Grid Data Completeness Check", fontsize=18, fontweight="bold")
+
+    # Vẽ bản đồ ĐỘNG (Trái)
+    title_dyn = f"[DYNAMIC] Metric: {col_dyn}"
+    if date_dyn:
+        title_dyn += f" | Date: {date_dyn}"
+    _draw_map(ax1, boundary, h3_grid, nodata_dyn, title_dyn)
+
+    # Vẽ bản đồ TĨNH (Phải)
+    title_stat = f"[STATIC] Metric: {col_stat}"
+    _draw_map(ax2, boundary, h3_grid, nodata_stat, title_stat)
+
+    # Thêm Legend chung ở dưới cùng
     legend_patches = [
         mpatches.Patch(facecolor="#f5f5f5", edgecolor="black", label="Boundary"),
-        mpatches.Patch(facecolor="none", edgecolor="#2E8B57", label="Valid cells"),
-        mpatches.Patch(facecolor="#D32F2F", edgecolor="#7F1D1D", label="NoData cells"),
+        mpatches.Patch(facecolor="none", edgecolor="#2E8B57", label="Valid Data"),
+        mpatches.Patch(facecolor="#D32F2F", edgecolor="#7F1D1D", label="NoData (Missing)"),
     ]
-    ax.legend(handles=legend_patches, loc="lower right")
+    fig.legend(handles=legend_patches, loc="lower center", ncol=3, fontsize=12, bbox_to_anchor=(0.5, 0.02))
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=180)
-        print(f"Saved figure: {save_path}")
+        plt.savefig(save_path, dpi=150)
+        print(f"✅ Đã lưu ảnh kiểm tra tại: {save_path}")
 
     if show:
         plt.show()
     else:
         plt.close(fig)
 
-    return total_cells, num_nodata
-
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Visualize NoData cells on H3 grid.")
-    parser.add_argument("--boundary", default=SHAPEFILE_CLEAN, help="Path to cleaned boundary shapefile (.shp)")
-    parser.add_argument("--grid", default=H3_GRID_GEOJSON, help="Path to H3 grid GeoJSON")
-    parser.add_argument("--csv", default=_default_csv_path(), help="Path to H3 dataset CSV")
-    parser.add_argument("--value-col", default=None, help="Value column to inspect (auto-detect if omitted)")
-    parser.add_argument("--date", default=None, help="Filter one date (YYYY-MM-DD)")
-    parser.add_argument(
-        "--save",
-        default=os.path.join(DATA_PROCESSED, "nodata_check.png"),
-        help="Output PNG path. Use empty string to disable saving.",
-    )
-    parser.add_argument("--no-show", action="store_true", help="Do not open matplotlib window")
+    parser = argparse.ArgumentParser(description="Visualize NoData cells for both Dynamic and Static H3 datasets.")
+    parser.add_argument("--date", default=None, help="Lọc theo ngày cho biến động (VD: 2021-01-01)")
+    parser.add_argument("--val-dyn", default=None, help="Tên cột ĐỘNG muốn kiểm tra (Mặc định: Tự tìm)")
+    parser.add_argument("--val-stat", default=None, help="Tên cột TĨNH muốn kiểm tra (Mặc định: Tự tìm)")
+    parser.add_argument("--save", default=os.path.join(DATA_PROCESSED, "dual_nodata_check.png"))
+    parser.add_argument("--no-show", action="store_true", help="Chỉ lưu ảnh, không mở cửa sổ hiện lên")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
-    print("Boundary:", args.boundary)
-    print("H3 Grid :", args.grid)
-    print("CSV     :", args.csv)
+    # Đường dẫn mặc định
+    dyn_csv_path = os.path.join(DATA_PROCESSED, "FINAL_MERGED_DATASET.csv")
+    stat_csv_path = os.path.join(DATA_PROCESSED, "DIM_H3_STATIC.csv")
 
-    boundary, h3_grid, df = load_inputs(args.boundary, args.grid, args.csv)
+    try:
+        boundary, h3_grid, df_dyn, df_stat = load_inputs(SHAPEFILE_CLEAN, H3_GRID_GEOJSON, dyn_csv_path, stat_csv_path)
+    except Exception as e:
+        print(f"❌ Lỗi tải dữ liệu: {e}")
+        return
 
-    value_col = args.value_col or _guess_value_column(df)
-    if value_col not in df.columns:
-        raise ValueError(f"value column '{value_col}' not found in CSV.")
+    # Tự động lấy cột nếu người dùng không truyền vào
+    col_dyn = args.val_dyn or _guess_value_column(df_dyn)
+    col_stat = args.val_stat or _guess_value_column(df_stat)
 
-    nodata_h3 = build_nodata_index(df, value_col=value_col, date_filter=args.date)
+    print(f"🔍 Kiểm tra Động: cột '{col_dyn}' (Ngày: {args.date if args.date else 'Tất cả'})")
+    print(f"🔍 Kiểm tra Tĩnh: cột '{col_stat}'")
 
-    total_cells, num_nodata = plot_nodata(
+    # Xác định các ô bị NoData
+    nodata_dyn = build_nodata_index(df_dyn, value_col=col_dyn, date_filter=args.date)
+    nodata_stat = build_nodata_index(df_stat, value_col=col_stat, date_filter=None) # Static không có ngày
+
+    # Vẽ 2 bản đồ cùng lúc
+    plot_dual_nodata(
         boundary=boundary,
         h3_grid=h3_grid,
-        nodata_h3=nodata_h3,
-        value_col=value_col,
-        date_filter=args.date,
-        save_path=(args.save if args.save else None),
-        show=not args.no_show,
+        nodata_dyn=nodata_dyn,
+        col_dyn=col_dyn,
+        date_dyn=args.date,
+        nodata_stat=nodata_stat,
+        col_stat=col_stat,
+        save_path=args.save,
+        show=not args.no_show
     )
-
-    print("-" * 40)
-    if num_nodata > 0:
-        print(f"NoData detected: {num_nodata}/{total_cells} cells")
-    else:
-        print("No NoData cells detected.")
-    print("-" * 40)
-
 
 if __name__ == "__main__":
     main()

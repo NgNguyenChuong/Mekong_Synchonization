@@ -2,11 +2,11 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor
 from config import (
-    DATA_SPECS, H3_GRID_GEOJSON, CRS_METRIC, CRS_WGS84, DATA_RAW
+    DATA_SPECS, H3_GRID_GEOJSON, CRS_METRIC, CRS_WGS84, DATA_RAW,STATIC_SPECS
 )
 from utils_h3 import load_h3_multipoints
 from preprocessing import run_preprocessing
-from processing import process_single_dataset, merge_all_datasets
+from processing import process_single_dataset, merge_dynamic_datasets,process_single_static_dataset, merge_static_datasets
 
 
 def main():
@@ -38,6 +38,7 @@ def main():
     # Chuẩn bị danh sách tham số để đẩy vào Pool
     # Mỗi worker cần: key, config của key đó, và dữ liệu grid
     tasks = []
+    static_tasks = []
     for key, spec in DATA_SPECS.items():
         input_dir = os.path.join(DATA_RAW, spec["folder"])
         if not os.path.exists(input_dir):
@@ -48,6 +49,16 @@ def main():
     if not tasks:
         print("❌ No valid dataset folders found. Nothing to process.")
         return
+    
+    for key, spec in STATIC_SPECS.items():
+        input_path = os.path.join(DATA_RAW, spec["folder"], spec["file"])
+        if not os.path.exists(input_path):
+            print(f"⚠️ [Skip] Static {key.upper()} - file not found: {input_path}")
+            continue
+        static_tasks.append((key, spec, h3_data_bundle))
+    if not static_tasks:
+        print("❌ No valid static dataset files found. Nothing to process.")
+        return
 
     # SỐ LUỒNG TỐI ĐA (max_workers)
     # Nếu máy bạn 8 core, để 4-6 là đẹp. Nếu RAM yếu thì giảm xuống.
@@ -57,10 +68,12 @@ def main():
     with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
         # Map hàm worker với danh sách tasks
         results = list(executor.map(process_single_dataset, tasks))
+        static_results = list(executor.map(process_single_static_dataset, static_tasks))
     
     # --- MERGE CSV ---
     print("\n[STEP 3] Merging all datasets...")
-    merge_all_datasets()
+    merge_dynamic_datasets()
+    merge_static_datasets()
     # ---------------------
 
     print("\n==================================================")
