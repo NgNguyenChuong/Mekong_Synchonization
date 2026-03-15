@@ -5,9 +5,13 @@ data/processed/
 # Python
 __pycache__/
 *.pyc
-.venv/
+
+# env
 .env
+.venv/
+env/
 
 # OS
 .DS_Store
 Thumbs.db
+
