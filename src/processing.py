@@ -325,51 +325,66 @@ def extract_static_generic(spec_name, spec_config, h3_data_bundle, raw_root_dir)
         cols = ["h3_index"] + [c for c in df_out.columns if c != "h3_index"]
         return df_out[cols]
 
+
     # -------------------------------------------------------------
-    # LOGIC 2: Tính khoảng cách ngắn nhất đến sông (River Proximity)
+    # LOGIC 2: Tính khoảng cách ngắn nhất đến sông VÀ Tỷ lệ % nước
     # -------------------------------------------------------------
     elif method == "min_distance":
-        print(f"   🌊 Đang tính toán khoảng cách đến sông gần nhất...")
+        print(f"   🌊 Đang tính toán khoảng cách sông và tỷ lệ mặt nước...")
+        
+        # 1. TÍNH TỶ LỆ NƯỚC (Vì file là 0 và 1, nên 'mean' chính là tỷ lệ %)
+        water_stats = zonal_stats(gdf, file_path, stats="mean")
+        water_fractions = np.array([
+            s['mean'] if s['mean'] is not None else 0.0 
+            for s in water_stats
+        ])
+        
+        # Những ô có nước (tỷ lệ > 0)
+        has_water_mask = water_fractions > 0.05
+
+        # 2. CHUẨN BỊ ĐO KHOẢNG CÁCH BẰNG KDTREE
         with rasterio.open(file_path) as src:
             data = src.read(1)
             nodata = src.nodata
             
-            # Lọc ra các pixel là sông (Giả sử sông có giá trị > 0)
             if nodata is not None:
-                river_mask = (data > 0) & (data != nodata)
+                river_mask = (data == 1) & (data != nodata)
             else:
-                river_mask = (data > 0)
+                river_mask = (data == 1)
                 
-            # Lấy tọa độ (row, col) của các pixel sông
             rows, cols = np.where(river_mask)
             
             if len(rows) == 0:
                 print("   ⚠️ Lỗi: Không có pixel sông nào trong file TIF.")
                 vals = [np.nan] * len(h3_ids)
             else:
-                # Chuyển đổi từ (row, col) sang hệ tọa độ bản đồ (X, Y)
+                # Tìm tọa độ sông và xây cây KDTree
                 xs, ys = rasterio.transform.xy(src.transform, rows, cols)
                 river_coords = np.column_stack((xs, ys))
-                
-                # Tạo cây KDTree để tìm kiếm khoảng cách cực nhanh
                 tree = cKDTree(river_coords)
                 
-                # Lấy tọa độ tâm của các ô lưới H3
+                # Tìm tọa độ tâm H3 và đo khoảng cách
                 centroids = gdf.geometry.centroid
                 h3_coords = np.column_stack((centroids.x, centroids.y))
-                
-                # Query khoảng cách ngắn nhất từ mỗi tâm H3 đến điểm sông gần nhất
                 dists, _ = tree.query(h3_coords)
                 
-                # Quy đổi đơn vị: 
-                # Nếu bản đồ là độ (EPSG:4326), 1 độ ~ 111.32 km.
-                # Nếu bản đồ là mét (UTM), chia 1000 ra km.
+                # Quy đổi ra km
                 if src.crs and src.crs.is_geographic:
                     vals = dists * 111.32 
                 else:
                     vals = dists / 1000.0
                     
-        print(f"   ✅ Đã tính xong khoảng cách sông (Trung bình: {np.nanmean(vals):.2f} km)")
+                # 3. KẾT HỢP LOGIC: Ép khoảng cách = 0 cho những ô đã có nước
+                vals = np.where(has_water_mask, 0.0, vals)
+                    
+        print(f"   ✅ Xong! (Khoảng cách TB: {np.nanmean(vals):.2f} km | Ô có nước: {has_water_mask.sum()}/{len(h3_ids)})")
+        
+        # 4. LƯU CẢ 2 CỘT VÀO FILE H3_RIVER.CSV
+        return pd.DataFrame({
+            "h3_index": h3_ids,
+            col_name: vals,                                # Cột 1: river_proximity (Khoảng cách - km)
+            f"{col_name}_fraction": water_fractions        # Cột 2: river_proximity_fraction (Tỷ lệ % - từ 0 đến 1)
+        })
 
     # -------------------------------------------------------------
     # LOGIC 3: Zonal Stats cơ bản (mean, max, min cho DEM...)
