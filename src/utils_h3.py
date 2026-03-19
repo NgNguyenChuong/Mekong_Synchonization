@@ -81,7 +81,7 @@ def random_points_in_polygon(poly, n):
     return points
 
 # -----------------------------------------------------------
-# Sampling Logic
+# Sampling Logic - OPTIMIZED
 # -----------------------------------------------------------
 def is_nodata(value, nodata):
     if value is None or nodata is None:
@@ -93,56 +93,62 @@ def is_nodata(value, nodata):
 
 def sample_multiband_robust(tif_path, point_groups, h3_geoms=None, n_random=15):
     """
-    Chiến thuật lấy mẫu: 
-    1. Lấy tại tâm
-    2. Lấy trung bình 6 điểm cạnh
-    3. Lấy random trong vùng (fallback)
+    Chiến thuật lấy mẫu (OPTIMIZED - Batch sampling):
+    1. Lấy tại tâm (batch)
+    2. Lấy trung bình 6 điểm cạnh (batch)
     """
     with rasterio.open(tif_path) as src:
         nodata = src.nodata
         num_bands = src.count
         num_cells = len(point_groups)
-        
+
         # Mảng kết quả [num_cells][num_days_in_month]
         vals = [[None] * num_bands for _ in range(num_cells)]
 
         for band_idx in range(num_bands):
-            idx_param = band_idx + 1 # rasterio index bắt đầu từ 1
-            
-            for i, points in enumerate(point_groups):
-                # Strategy 1: Centroid
-                try:
-                    v = next(src.sample([points[0]], indexes=idx_param))[0]
-                    if not is_nodata(v, nodata):
-                        vals[i][band_idx] = float(v)
-                        continue
-                except: pass
+            idx_param = band_idx + 1  # rasterio index bắt đầu từ 1
 
-                # Strategy 2: 6 midpoints
-                valid_vals = []
-                for pt in points[1:]:
-                    try:
-                        v = next(src.sample([pt], indexes=idx_param))[0]
+            # OPTIMIZED: Batch sampling cho centroids
+            centroids = [points[0] for points in point_groups]
+            centroid_values = list(src.sample(centroids, indexes=idx_param))
+
+            # Track những cell cần fallback sang midpoints
+            needs_fallback = []
+
+            for i, v in enumerate(centroid_values):
+                v = v[0]  # src.sample trả về array
+                if not is_nodata(v, nodata):
+                    vals[i][band_idx] = float(v)
+                else:
+                    needs_fallback.append(i)
+
+            # OPTIMIZED: Batch sampling cho midpoints của những cell cần fallback
+            if needs_fallback:
+                # Thu thập tất cả midpoints
+                all_midpoints = []
+                midpoint_cell_map = []  # Map midpoint index -> cell index
+
+                for cell_idx in needs_fallback:
+                    midpoints = point_groups[cell_idx][1:]  # Bỏ centroid
+                    for pt in midpoints:
+                        all_midpoints.append(pt)
+                        midpoint_cell_map.append(cell_idx)
+
+                # Batch sample tất cả midpoints
+                if all_midpoints:
+                    midpoint_values = list(src.sample(all_midpoints, indexes=idx_param))
+
+                    # Gom giá trị theo cell
+                    cell_valid_vals = {idx: [] for idx in needs_fallback}
+                    for j, v in enumerate(midpoint_values):
+                        v = v[0]
+                        cell_idx = midpoint_cell_map[j]
                         if not is_nodata(v, nodata):
-                            valid_vals.append(v)
-                    except: pass
-                
-                if valid_vals:
-                    vals[i][band_idx] = float(sum(valid_vals) / len(valid_vals))
-                    continue
+                            cell_valid_vals[cell_idx].append(v)
 
-                # Strategy 3: Random points (slowest, fallback)
-                if h3_geoms is not None:
-                    rand_pts = random_points_in_polygon(h3_geoms[i], n_random)
-                    rand_vals = []
-                    for pt in rand_pts:
-                        try:
-                            v = next(src.sample([pt], indexes=idx_param))[0]
-                            if not is_nodata(v, nodata):
-                                rand_vals.append(v)
-                        except: pass
-                    
-                    if rand_vals:
-                        vals[i][band_idx] = float(sum(rand_vals) / len(rand_vals))
+                    # Tính trung bình
+                    for cell_idx, valid_vals in cell_valid_vals.items():
+                        if valid_vals:
+                            vals[cell_idx][band_idx] = float(sum(valid_vals) / len(valid_vals))
 
         return vals, nodata
