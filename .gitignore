@@ -1,7 +1,8 @@
 # Data
 data/raw/
 data/processed/
-
+data_old
+data
 # Python
 __pycache__/
 *.pyc

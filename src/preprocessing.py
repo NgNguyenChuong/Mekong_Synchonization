@@ -4,6 +4,7 @@ import geemap
 import geopandas as gpd
 import h3
 from shapely.geometry import Polygon
+from shapely.strtree import STRtree
 from shapely.ops import unary_union
 from config import (
     GEE_PROJECT, GEE_TARGET_AREAS, GEE_ADMIN_COLLECTION, GEE_ADMIN_NAME_FIELD,
@@ -38,8 +39,8 @@ def _resolve_input_shapefile():
             "Keep exactly one .shp before running pipeline:" + names
         )
 
-    if ENABLE_GEE_FALLBACK:
-        return download_shapefile_gee()
+    # if ENABLE_GEE_FALLBACK:
+    #     return download_shapefile_gee()
 
     raise FileNotFoundError(
         "No input shapefile found. Add exactly one .shp to data/raw. "
@@ -47,30 +48,30 @@ def _resolve_input_shapefile():
     )
 
 
-# -----------------------------------------------------------
-# 2. DOWNLOAD SHAPEFILE FROM GEE (OPTIONAL FALLBACK)
-# -----------------------------------------------------------
-def download_shapefile_gee():
-    print("   🌍 Authenticating & Initializing GEE...")
-    if GEE_PROJECT:
-        try:
-            ee.Initialize(project=GEE_PROJECT)
-        except Exception:
-            print("   ⚠️  GEE Init with project failed. Trying generic ee.Initialize()...")
-            ee.Initialize()
-    else:
-        ee.Initialize()
+# # -----------------------------------------------------------
+# # 2. DOWNLOAD SHAPEFILE FROM GEE (OPTIONAL FALLBACK)
+# # -----------------------------------------------------------
+# def download_shapefile_gee():
+#     print("   🌍 Authenticating & Initializing GEE...")
+#     if GEE_PROJECT:
+#         try:
+#             ee.Initialize(project=GEE_PROJECT)
+#         except Exception:
+#             print("   ⚠️  GEE Init with project failed. Trying generic ee.Initialize()...")
+#             ee.Initialize()
+#     else:
+#         ee.Initialize()
 
-    print("   ⬇️  Downloading boundary from GEE...")
-    if not GEE_TARGET_AREAS:
-        raise ValueError("GEE fallback requires at least one name in GEE_TARGET_AREAS.")
+#     print("   ⬇️  Downloading boundary from GEE...")
+#     if not GEE_TARGET_AREAS:
+#         raise ValueError("GEE fallback requires at least one name in GEE_TARGET_AREAS.")
 
-    admin_fc = ee.FeatureCollection(GEE_ADMIN_COLLECTION)
-    target_fc = admin_fc.filter(ee.Filter.inList(GEE_ADMIN_NAME_FIELD, GEE_TARGET_AREAS))
+#     admin_fc = ee.FeatureCollection(GEE_ADMIN_COLLECTION)
+#     target_fc = admin_fc.filter(ee.Filter.inList(GEE_ADMIN_NAME_FIELD, GEE_TARGET_AREAS))
 
-    geemap.ee_export_vector(target_fc, filename=SHAPEFILE_RAW)
-    print(f"   ✅ Downloaded boundary to: {SHAPEFILE_RAW}")
-    return SHAPEFILE_RAW
+#     geemap.ee_export_vector(target_fc, filename=SHAPEFILE_RAW)
+#     print(f"   ✅ Downloaded boundary to: {SHAPEFILE_RAW}")
+#     return SHAPEFILE_RAW
 
 
 # -----------------------------------------------------------
@@ -155,24 +156,28 @@ def generate_h3_grid(clean_shapefile_path):
 
     print(f"   --> Generated {len(hex_set)} candidate cells.")
 
-    # --- CLIPPING ---
+    # --- CLIPPING (OPTIMIZED với STRtree) ---
     print("   ✂️  Clipping to exact boundary...")
     union_poly = unary_union(gdf.geometry)
-    
-    valid_hex = []
-    hex_geoms = []
 
-    for h in hex_set:
+    # OPTIMIZED: Tạo tất cả hex polygons trước
+    hex_list = list(hex_set)
+    hex_geoms_all = []
+    for h in hex_list:
         # H3 v4: cell_to_boundary trả về tuple ((lat, lon), ...)
         boundary = h3.cell_to_boundary(h)
-        
         # Đảo ngược (Lat, Lon) -> (Lon, Lat) cho Shapely Polygon
         poly_coords = [(p[1], p[0]) for p in boundary]
-        poly = Polygon(poly_coords)
-        
-        if poly.intersects(union_poly):
-            valid_hex.append(h)
-            hex_geoms.append(poly)
+        hex_geoms_all.append(Polygon(poly_coords))
+
+    # OPTIMIZED: Sử dụng STRtree để query nhanh
+    tree = STRtree(hex_geoms_all)
+
+    # Query tất cả hex intersects với boundary
+    valid_indices = tree.query(union_poly, predicate='intersects')
+
+    valid_hex = [hex_list[i] for i in valid_indices]
+    hex_geoms = [hex_geoms_all[i] for i in valid_indices]
 
     # Save
     gdf_hex = gpd.GeoDataFrame(
