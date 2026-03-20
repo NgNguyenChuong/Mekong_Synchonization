@@ -30,7 +30,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from concurrent.futures import ProcessPoolExecutor
 from config import (
-    DATA_SPECS, H3_GRID_GEOJSON, CRS_METRIC, CRS_WGS84, DATA_RAW, STATIC_SPECS, DATA_PROCESSED
+    DATA_SPECS, H3_GRID_GEOJSON, CRS_METRIC, CRS_WGS84, DATA_RAW,
+    STATIC_SPECS, DATA_PROCESSED, PERIODIC_SPECS
 )
 from utils_h3 import load_h3_multipoints
 from preprocessing import run_preprocessing
@@ -192,6 +193,10 @@ Vi du su dung:
                            help='Bo qua xu ly du lieu tinh (DEM, landcover, river)')
     data_group.add_argument('--skip-dynamic', action='store_true',
                            help='Bo qua xu ly du lieu dong (rain, temp, solar...)')
+    data_group.add_argument('--skip-periodic', action='store_true',
+                           help='Bo qua xu ly du lieu periodic (Sentinel-2, NDVI...)')
+    data_group.add_argument('--only-periodic', action='store_true',
+                           help='Chi xu ly du lieu periodic')
 
     # Processing options
     proc_group = parser.add_argument_group('Processing Options')
@@ -232,6 +237,17 @@ Vi du su dung:
             exists = "✅" if os.path.exists(path) else "❌"
             print(f"  {exists} {key:15} -> {spec['folder']}/{spec['file']}")
 
+        print("\n🛰️  PERIODIC DATASETS (du lieu ve tinh - Sentinel-2, NDVI...):")
+        print("-" * 50)
+        if PERIODIC_SPECS:
+            for key, spec in PERIODIC_SPECS.items():
+                folder = os.path.join(DATA_RAW, spec["folder"])
+                exists = "✅" if os.path.exists(folder) else "❌"
+                interval = spec.get("typical_interval_days", "?")
+                print(f"  {exists} {key:15} -> {spec['folder']}/ (moi {interval} ngay)")
+        else:
+            print("  (Chua cau hinh. Tao file data/raw/periodic_specs.json)")
+
         return
 
     # Build options dict
@@ -241,6 +257,12 @@ Vi du su dung:
         'single_month': args.single_month,
         'no_fill': args.no_fill,
     }
+
+    # Handle --only-periodic
+    if args.only_periodic:
+        args.skip_static = True
+        args.skip_dynamic = True
+        args.skip_periodic = False
 
     # Filter datasets
     selected_datasets = None
@@ -268,16 +290,24 @@ Vi du su dung:
 
     if not args.skip_dynamic:
         if selected_datasets:
-            print(f"   📊 Dynamic datasets: {', '.join(selected_datasets)}")
+            print(f"   📊 Dynamic: {', '.join(selected_datasets)}")
         else:
-            print(f"   📊 Dynamic datasets: Tat ca ({len(DATA_SPECS)} loai)")
+            print(f"   📊 Dynamic: Tat ca ({len(DATA_SPECS)} loai)")
     else:
-        print(f"   📊 Dynamic datasets: SKIP")
+        print(f"   📊 Dynamic: SKIP")
 
     if not args.skip_static:
-        print(f"   🗺️  Static datasets: Tat ca ({len(STATIC_SPECS)} loai)")
+        print(f"   🗺️  Static: Tat ca ({len(STATIC_SPECS)} loai)")
     else:
-        print(f"   🗺️  Static datasets: SKIP")
+        print(f"   🗺️  Static: SKIP")
+
+    if not args.skip_periodic:
+        if PERIODIC_SPECS:
+            print(f"   🛰️  Periodic: Tat ca ({len(PERIODIC_SPECS)} loai)")
+        else:
+            print(f"   🛰️  Periodic: Chua cau hinh")
+    else:
+        print(f"   🛰️  Periodic: SKIP")
 
     print(f"   🔧 Fill missing: {'Khong' if args.no_fill else 'Co'}")
     print(f"   🔗 Merge: {'Khong' if args.no_merge else 'Co'}")
@@ -308,6 +338,7 @@ Vi du su dung:
     # 3. PREPARE TASKS
     tasks = []
     static_tasks = []
+    periodic_tasks = []
 
     if not args.skip_dynamic:
         for key, spec in DATA_SPECS.items():
@@ -330,27 +361,45 @@ Vi du su dung:
                 continue
             static_tasks.append((key, spec, h3_data_bundle))
 
+    if not args.skip_periodic and PERIODIC_SPECS:
+        from processing import process_single_periodic_dataset
+        for key, spec in PERIODIC_SPECS.items():
+            input_dir = os.path.join(DATA_RAW, spec["folder"])
+            if not os.path.exists(input_dir):
+                print(f"⚠️ [Skip] Periodic {key.upper()} - folder not found")
+                continue
+            periodic_tasks.append((key, spec, h3_data_bundle, options))
+
     # 4. PARALLEL PROCESSING
     max_workers = args.workers or max(1, (os.cpu_count() or 1) - 1)
     print(f"\n[STEP 2] Processing with {max_workers} workers...")
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         if tasks:
+            print(f"   🔄 Processing {len(tasks)} dynamic datasets...")
             list(executor.map(process_single_dataset_with_options, tasks))
 
         if static_tasks:
             from processing import process_single_static_dataset
+            print(f"   🔄 Processing {len(static_tasks)} static datasets...")
             list(executor.map(process_single_static_dataset, static_tasks))
+
+        if periodic_tasks:
+            from processing import process_single_periodic_dataset
+            print(f"   🔄 Processing {len(periodic_tasks)} periodic datasets...")
+            list(executor.map(process_single_periodic_dataset, periodic_tasks))
 
     # 5. MERGE
     if not args.no_merge:
         print("\n[STEP 3] Merging datasets...")
-        from processing import merge_dynamic_datasets, merge_static_datasets
+        from processing import merge_dynamic_datasets, merge_static_datasets, merge_periodic_datasets
 
-        if not args.skip_dynamic:
+        if not args.skip_dynamic and tasks:
             merge_dynamic_datasets()
-        if not args.skip_static:
+        if not args.skip_static and static_tasks:
             merge_static_datasets()
+        if not args.skip_periodic and periodic_tasks:
+            merge_periodic_datasets()
 
     print("\n" + "=" * 60)
     print(f"✅ PIPELINE FINISHED in {time.time() - start_time:.1f} seconds")

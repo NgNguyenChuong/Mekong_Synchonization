@@ -278,7 +278,6 @@ def merge_dynamic_datasets():
         return None
 
 
-
 def extract_static_generic(spec_name, spec_config, h3_data_bundle, raw_root_dir):
     h3_ids, _, h3_geoms = h3_data_bundle
     
