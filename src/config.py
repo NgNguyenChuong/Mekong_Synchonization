@@ -213,7 +213,75 @@ def load_static_specs():
 # Gọi hàm để khởi tạo cấu hình
 STATIC_SPECS = load_static_specs()
 
+# ============================================================
+# PERIODIC FEATURES SPECIFICATIONS (DỮ LIỆU THEO CHU KỲ - VD: Sentinel-2)
+# ============================================================
+# Dùng cho dữ liệu thay đổi theo thời gian nhưng KHÔNG PHẢI hàng ngày
+# Ví dụ: NDVI mỗi 16 ngày, ảnh vệ tinh mỗi 5 ngày...
 
+DEFAULT_PERIODIC_SPECS = {
+    "sentinel_ndvi": {
+        "folder": "sentinel2_ndvi",
+        "file_pattern": "NDVI_{date}.tif",
+        "date_pattern": "%Y-%m-%d",
+        "col_name": "ndvi",
+        "output_file": "h3_sentinel_ndvi.csv",
+        "method": "mean",
+        "fill_method": "interpolate",
+        "typical_interval_days": 30
+    },
+    "sentinel_ndwi": {
+        "folder": "sentinel2_ndvi",
+        "file_pattern": "NDWI_{date}.tif",
+        "date_pattern": "%Y-%m-%d",
+        "col_name": "ndwi",
+        "output_file": "h3_sentinel_ndwi.csv",
+        "method": "mean",
+        "fill_method": "interpolate",
+        "typical_interval_days": 30
+    },
+}
+
+PERIODIC_SPECS_OVERRIDE_FILE = os.path.join(DATA_RAW, "periodic_specs.json")
+
+def load_periodic_specs():
+    """Load cấu hình biến periodic từ file JSON nếu có"""
+    if not os.path.exists(PERIODIC_SPECS_OVERRIDE_FILE):
+        return DEFAULT_PERIODIC_SPECS
+
+    try:
+        with open(PERIODIC_SPECS_OVERRIDE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        raise ValueError(f"Invalid periodic spec file: {PERIODIC_SPECS_OVERRIDE_FILE}. Error: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(f"{PERIODIC_SPECS_OVERRIDE_FILE} must be an object.")
+
+    if not data:
+        return DEFAULT_PERIODIC_SPECS
+
+    required_fields = {"folder", "col_name", "output_file"}
+
+    for key, spec in data.items():
+        if not isinstance(spec, dict):
+            raise ValueError(f"Periodic Dataset '{key}' must be an object.")
+
+        missing = required_fields - set(spec.keys())
+        if missing:
+            raise ValueError(f"Periodic Dataset '{key}' is missing required fields: {sorted(missing)}")
+
+        # Gán giá trị mặc định
+        spec.setdefault("date_pattern", "%Y-%m-%d")
+        spec.setdefault("file_pattern", "{date}.tif")
+        spec.setdefault("method", "mean")
+        spec.setdefault("fill_method", "none")
+        spec.setdefault("typical_interval_days", 16)
+
+    return data
+
+
+PERIODIC_SPECS = load_periodic_specs()
 
 
 FILL_CONFIG = {

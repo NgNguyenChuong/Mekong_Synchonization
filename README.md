@@ -92,6 +92,12 @@ Example:
 python src/pipeline.py
 ```
 
+Or use the CLI entrypoint with argument parsing:
+
+```bash
+python main.py
+```
+
 Pipeline steps:
 1. Resolve input boundary shapefile.
 2. Clean/dissolve boundary (optional small island filtering).
@@ -99,6 +105,112 @@ Pipeline steps:
 4. Extract daily raster values for each H3 cell.
 5. Fill missing values (spatial + nearest-neighbor fallback).
 6. Save each dataset CSV and merge to final file.
+
+## 4.1 CLI Arguments (Parse Values)
+
+Date arguments use format `YYYY-MM`.
+
+### Basic runs
+
+```bash
+# Run all (dynamic + static + periodic if configured)
+python main.py
+
+# Show detected datasets and periodic config status
+python main.py --list-datasets
+
+# Dry-run only (show plan, do not execute)
+python main.py --dry-run
+```
+
+### Date filtering
+
+```bash
+# Run one month
+python main.py --month 2024-03
+
+# Run a range (inclusive by month)
+python main.py --from 2024-01 --to 2024-03
+```
+
+### Select processing scope
+
+```bash
+# Skip static datasets
+python main.py --skip-static
+
+# Skip dynamic datasets
+python main.py --skip-dynamic
+
+# Skip periodic datasets
+python main.py --skip-periodic
+
+# Run only periodic datasets
+python main.py --only-periodic
+```
+
+### Dataset and performance options
+
+```bash
+# Run only selected dynamic datasets
+python main.py --datasets rain,solar,temp_avg
+
+# Disable fill missing values
+python main.py --no-fill
+
+# Disable merge outputs
+python main.py --no-merge
+
+# Skip preprocessing if grid already exists
+python main.py --skip-preprocess
+
+# Set worker count
+python main.py --workers 4
+```
+
+### Periodic-only examples
+
+```bash
+# Periodic only in a date range
+python main.py --only-periodic --from 2024-01 --to 2024-03 --skip-preprocess
+
+# Periodic only, no fill
+python main.py --only-periodic --from 2024-01 --to 2024-03 --skip-preprocess --no-fill
+```
+
+## 4.2 Periodic method configuration (zonal_stats)
+
+Periodic extraction uses `method` from periodic specs and passes it to `zonal_stats`.
+
+- Edit default specs in `src/config.py`, or
+- Create override file `data/raw/periodic_specs.json`
+
+Example:
+
+```json
+{
+	"sentinel_ndvi": {
+		"folder": "sentinel2_ndvi",
+		"file_pattern": "NDVI_{date}.tif",
+		"date_pattern": "%Y-%m-%d",
+		"col_name": "ndvi",
+		"output_file": "h3_sentinel_ndvi.csv",
+		"method": "mean",
+		"fill_method": "interpolate",
+		"typical_interval_days": 30
+	},
+	"sentinel_ndwi": {
+		"folder": "sentinel2_ndvi",
+		"file_pattern": "NDWI_{date}.tif",
+		"date_pattern": "%Y-%m-%d",
+		"col_name": "ndwi",
+		"output_file": "h3_sentinel_ndwi.csv",
+		"method": "median",
+		"fill_method": "interpolate",
+		"typical_interval_days": 30
+	}
+}
+```
 
 ## 5. Outputs
 
@@ -123,3 +235,13 @@ If no local shapefile is available, you can enable automatic download from Googl
 
 Local shapefile in `data/raw` still has higher priority when present.
 
+
+
+
+
+CHECK LIST
+dynamic DONE
+static DONE
+Perodic NOT
+Water level DONE
+SEA LEVEL NONED

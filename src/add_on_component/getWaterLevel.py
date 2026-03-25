@@ -115,6 +115,18 @@ def _to_dd_mm_yy_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 	return formatted
 
 
+def _sort_rows_by_date(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+	def sort_key(row: Dict[str, Any]) -> Any:
+		date_text = str(row.get("dd-mm-yy", "")).strip()
+		try:
+			return (0, datetime.strptime(date_text, "%d-%m-%Y"))
+		except ValueError:
+			# Keep malformed date rows at the end while preserving deterministic order.
+			return (1, date_text)
+
+	return sorted(rows, key=sort_key)
+
+
 def main() -> int:
 	parser = argparse.ArgumentParser(description="Fetch MRC water level data.")
 	parser.add_argument("--st-code", default="CDO", help="Station code, e.g. CDO")
@@ -130,6 +142,8 @@ def main() -> int:
 	if not formatted_rows:
 		print("No formatted data returned.")
 		return 0
+
+	formatted_rows = _sort_rows_by_date(formatted_rows)
 
 	out_path = args.out or _infer_output_name(args.st_code)
 	try:
