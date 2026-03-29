@@ -60,19 +60,6 @@ BUFFER_DIST = _env_int("BUFFER_DIST", 0)  # meters
 MIN_ISLAND_AREA_KM2 = _env_float("MIN_ISLAND_AREA_KM2", 0.0)
 H3_RESOLUTION = _env_int("H3_RESOLUTION", 7)
 
-# GEE fallback settings (disabled by default).
-ENABLE_GEE_FALLBACK = _env_bool("ENABLE_GEE_FALLBACK", True)
-GEE_PROJECT = 'hakathon-480615' #os.getenv("GEE_PROJECT", "").strip()
-GEE_ADMIN_COLLECTION = os.getenv("GEE_ADMIN_COLLECTION", "FAO/GAUL/2015/level1").strip()
-GEE_ADMIN_NAME_FIELD = os.getenv("GEE_ADMIN_NAME_FIELD", "ADM1_NAME").strip()
-
-# Default target names used only when GEE fallback is enabled.
-GEE_TARGET_AREAS = [
-    'An Giang', 'Bac Lieu', 'Ben Tre', 'Ca Mau', 'Can Tho city',
-    'Dong Thap', 'Hau Giang', 'Kien Giang', 'Long An',
-    'Soc Trang', 'Tien Giang', 'Tra Vinh', 'Vinh Long'
-]
-
 # ============================================================
 # DATASET SPECIFICATIONS
 # ============================================================
@@ -213,6 +200,8 @@ def load_static_specs():
 # Gọi hàm để khởi tạo cấu hình
 STATIC_SPECS = load_static_specs()
 
+
+
 # ============================================================
 # PERIODIC FEATURES SPECIFICATIONS (DỮ LIỆU THEO CHU KỲ - VD: Sentinel-2)
 # ============================================================
@@ -227,7 +216,6 @@ DEFAULT_PERIODIC_SPECS = {
         "col_name": "ndvi",
         "output_file": "h3_sentinel_ndvi.csv",
         "method": "mean",
-        "fill_method": "interpolate",
         "typical_interval_days": 30
     },
     "sentinel_ndwi": {
@@ -237,7 +225,6 @@ DEFAULT_PERIODIC_SPECS = {
         "col_name": "ndwi",
         "output_file": "h3_sentinel_ndwi.csv",
         "method": "mean",
-        "fill_method": "interpolate",
         "typical_interval_days": 30
     },
 }
@@ -275,7 +262,6 @@ def load_periodic_specs():
         spec.setdefault("date_pattern", "%Y-%m-%d")
         spec.setdefault("file_pattern", "{date}.tif")
         spec.setdefault("method", "mean")
-        spec.setdefault("fill_method", "none")
         spec.setdefault("typical_interval_days", 16)
 
     return data
@@ -283,8 +269,3 @@ def load_periodic_specs():
 
 PERIODIC_SPECS = load_periodic_specs()
 
-
-FILL_CONFIG = {
-    "MAX_K": 3,
-    "MIN_NEI": 3
-}

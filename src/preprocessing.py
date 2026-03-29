@@ -1,14 +1,11 @@
 import os
-import ee
-import geemap
 import geopandas as gpd
 import h3
 from shapely.geometry import Polygon
 from shapely.strtree import STRtree
 from shapely.ops import unary_union
 from config import (
-    GEE_PROJECT, GEE_TARGET_AREAS, GEE_ADMIN_COLLECTION, GEE_ADMIN_NAME_FIELD,
-    ENABLE_GEE_FALLBACK, DATA_RAW, SHAPEFILE_RAW, SHAPEFILE_CLEAN,
+    DATA_RAW, SHAPEFILE_RAW, SHAPEFILE_CLEAN,
     CRS_METRIC, CRS_WGS84, MIN_ISLAND_AREA_KM2,
     H3_GRID_GEOJSON, H3_RESOLUTION, BUFFER_DIST
 )
@@ -16,36 +13,36 @@ from config import (
 # -----------------------------------------------------------
 # 1. INPUT SHAPEFILE RESOLUTION
 # -----------------------------------------------------------
-def _find_shapefiles_in_raw():
-    if not os.path.exists(DATA_RAW):
-        return []
-    return sorted(
-        os.path.join(DATA_RAW, f)
-        for f in os.listdir(DATA_RAW)
-        if f.lower().endswith(".shp")
-    )
+# def _find_shapefiles_in_raw():
+#     if not os.path.exists(DATA_RAW):
+#         return []
+#     return sorted(
+#         os.path.join(DATA_RAW, f)
+#         for f in os.listdir(DATA_RAW)
+#         if f.lower().endswith(".shp")
+#     )
 
 
-def _resolve_input_shapefile():
-    candidates = _find_shapefiles_in_raw()
-    if len(candidates) == 1:
-        selected = candidates[0]
-        print(f"   ✅ Using input shapefile: {selected}")
-        return selected
-    if len(candidates) > 1:
-        names = "\n      - " + "\n      - ".join(candidates)
-        raise ValueError(
-            "Multiple shapefiles found in data/raw. "
-            "Keep exactly one .shp before running pipeline:" + names
-        )
+# def _resolve_input_shapefile():
+#     candidates = _find_shapefiles_in_raw()
+#     if len(candidates) == 1:
+#         selected = candidates[0]
+#         print(f"    Using input shapefile: {selected}")
+#         return selected
+#     if len(candidates) > 1:
+#         names = "\n      - " + "\n      - ".join(candidates)
+#         raise ValueError(
+#             "Multiple shapefiles found in data/raw. "
+#             "Keep exactly one .shp before running pipeline:" + names
+#         )
 
-    # if ENABLE_GEE_FALLBACK:
-    #     return download_shapefile_gee()
+#     # bỏ fallback 
+#     # if ENABLE_GEE_FALLBACK:
+#     #     return download_shapefile_gee()
 
-    raise FileNotFoundError(
-        "No input shapefile found. Add exactly one .shp to data/raw. "
-        "If needed, enable GEE fallback with ENABLE_GEE_FALLBACK=true."
-    )
+#     raise FileNotFoundError(
+#         "No input shapefile found. Add exactly one .shp to data/raw. "
+#     )
 
 
 # # -----------------------------------------------------------
@@ -77,16 +74,16 @@ def _resolve_input_shapefile():
 # -----------------------------------------------------------
 # 3. CLEAN SHAPEFILE (REMOVE SMALL ISLANDS)
 # -----------------------------------------------------------
-def clean_shapefile(input_shapefile):
-    if os.path.exists(SHAPEFILE_CLEAN) and os.path.getmtime(SHAPEFILE_CLEAN) >= os.path.getmtime(input_shapefile):
-        print(f"   ✅ Cleaned shapefile already exists: {SHAPEFILE_CLEAN}")
+def clean_shapefile():
+    if os.path.exists(SHAPEFILE_CLEAN) and os.path.getmtime(SHAPEFILE_CLEAN) >= os.path.getmtime(SHAPEFILE_RAW):
+        print(f"    Cleaned shapefile already exists: {SHAPEFILE_CLEAN}")
         return SHAPEFILE_CLEAN
 
-    print("   🧹 Cleaning shapefile (removing small islands)...")
-    if not os.path.exists(input_shapefile):
-        raise FileNotFoundError(f"❌ Input shapefile missing: {input_shapefile}")
+    print("    Cleaning shapefile (removing small islands as option)...")
+    if not os.path.exists(SHAPEFILE_RAW):
+        raise FileNotFoundError(f" Input shapefile missing: {SHAPEFILE_RAW}")
 
-    gdf = gpd.read_file(input_shapefile)
+    gdf = gpd.read_file(SHAPEFILE_RAW)
     gdf_metric = gdf.to_crs(CRS_METRIC)
 
     gdf_exploded = gdf_metric.explode(index_parts=True).reset_index(drop=True)
@@ -100,24 +97,24 @@ def clean_shapefile(input_shapefile):
     gdf_final = gdf_clean.dissolve().to_crs(CRS_WGS84)
     
     gdf_final.to_file(SHAPEFILE_CLEAN)
-    print(f"   ✅ Cleaned shapefile saved: {SHAPEFILE_CLEAN}")
+    print(f"    Cleaned shapefile saved: {SHAPEFILE_CLEAN}")
     return SHAPEFILE_CLEAN
 
 
 # -----------------------------------------------------------
 # 4. GENERATE H3 GRID (Fixed API: h3.LatLngPoly)
 # -----------------------------------------------------------
-def generate_h3_grid(clean_shapefile_path):
-    if os.path.exists(H3_GRID_GEOJSON) and os.path.getmtime(H3_GRID_GEOJSON) >= os.path.getmtime(clean_shapefile_path):
-        print(f"   ✅ H3 Grid already exists: {H3_GRID_GEOJSON}")
+def generate_h3_grid():
+    if os.path.exists(H3_GRID_GEOJSON) and os.path.getmtime(H3_GRID_GEOJSON) >= os.path.getmtime(SHAPEFILE_CLEAN):
+        print(f"    H3 Grid already exists: {H3_GRID_GEOJSON}")
         return
 
     print("   HEX Generating H3 Grid (v4)...")
 
-    if not os.path.exists(clean_shapefile_path):
-        raise FileNotFoundError(f"❌ Cleaned shapefile missing: {clean_shapefile_path}")
+    if not os.path.exists(SHAPEFILE_CLEAN):
+        raise FileNotFoundError(f" Cleaned shapefile missing: {SHAPEFILE_CLEAN}")
 
-    gdf = gpd.read_file(clean_shapefile_path).to_crs(CRS_WGS84)
+    gdf = gpd.read_file(SHAPEFILE_CLEAN).to_crs(CRS_WGS84)
     
     # Tạo buffer để bao phủ rìa biển
     if BUFFER_DIST > 0:
@@ -157,7 +154,7 @@ def generate_h3_grid(clean_shapefile_path):
     print(f"   --> Generated {len(hex_set)} candidate cells.")
 
     # --- CLIPPING (OPTIMIZED với STRtree) ---
-    print("   ✂️  Clipping to exact boundary...")
+    print("     Clipping to exact boundary...")
     union_poly = unary_union(gdf.geometry)
 
     # OPTIMIZED: Tạo tất cả hex polygons trước
@@ -187,7 +184,7 @@ def generate_h3_grid(clean_shapefile_path):
     )
     
     gdf_hex.to_file(H3_GRID_GEOJSON, driver="GeoJSON")
-    print(f"   💾 H3 Grid saved: {H3_GRID_GEOJSON} ({len(gdf_hex)} cells)")
+    print(f"    H3 Grid saved: {H3_GRID_GEOJSON} ({len(gdf_hex)} cells)")
 
 
 # -----------------------------------------------------------
@@ -195,7 +192,6 @@ def generate_h3_grid(clean_shapefile_path):
 # -----------------------------------------------------------
 def run_preprocessing():
     print("--- [PREPROCESSING] ---")
-    input_shapefile = _resolve_input_shapefile()
-    clean_shapefile_path = clean_shapefile(input_shapefile)
-    generate_h3_grid(clean_shapefile_path)
+    clean_shapefile()
+    generate_h3_grid()
     print("-----------------------")
