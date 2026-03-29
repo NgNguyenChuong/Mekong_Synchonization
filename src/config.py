@@ -60,19 +60,6 @@ BUFFER_DIST = _env_int("BUFFER_DIST", 0)  # meters
 MIN_ISLAND_AREA_KM2 = _env_float("MIN_ISLAND_AREA_KM2", 0.0)
 H3_RESOLUTION = _env_int("H3_RESOLUTION", 7)
 
-# GEE fallback settings (disabled by default).
-ENABLE_GEE_FALLBACK = _env_bool("ENABLE_GEE_FALLBACK", True)
-GEE_PROJECT = 'hakathon-480615' #os.getenv("GEE_PROJECT", "").strip()
-GEE_ADMIN_COLLECTION = os.getenv("GEE_ADMIN_COLLECTION", "FAO/GAUL/2015/level1").strip()
-GEE_ADMIN_NAME_FIELD = os.getenv("GEE_ADMIN_NAME_FIELD", "ADM1_NAME").strip()
-
-# Default target names used only when GEE fallback is enabled.
-GEE_TARGET_AREAS = [
-    'An Giang', 'Bac Lieu', 'Ben Tre', 'Ca Mau', 'Can Tho city',
-    'Dong Thap', 'Hau Giang', 'Kien Giang', 'Long An',
-    'Soc Trang', 'Tien Giang', 'Tra Vinh', 'Vinh Long'
-]
-
 # ============================================================
 # DATASET SPECIFICATIONS
 # ============================================================
@@ -215,8 +202,70 @@ STATIC_SPECS = load_static_specs()
 
 
 
+# ============================================================
+# PERIODIC FEATURES SPECIFICATIONS (DỮ LIỆU THEO CHU KỲ - VD: Sentinel-2)
+# ============================================================
+# Dùng cho dữ liệu thay đổi theo thời gian nhưng KHÔNG PHẢI hàng ngày
+# Ví dụ: NDVI mỗi 16 ngày, ảnh vệ tinh mỗi 5 ngày...
 
-FILL_CONFIG = {
-    "MAX_K": 3,
-    "MIN_NEI": 3
+DEFAULT_PERIODIC_SPECS = {
+    "sentinel_ndvi": {
+        "folder": "sentinel2_ndvi",
+        "file_pattern": "NDVI_{date}.tif",
+        "date_pattern": "%Y-%m-%d",
+        "col_name": "ndvi",
+        "output_file": "h3_sentinel_ndvi.csv",
+        "method": "mean",
+        "typical_interval_days": 30
+    },
+    "sentinel_ndwi": {
+        "folder": "sentinel2_ndvi",
+        "file_pattern": "NDWI_{date}.tif",
+        "date_pattern": "%Y-%m-%d",
+        "col_name": "ndwi",
+        "output_file": "h3_sentinel_ndwi.csv",
+        "method": "mean",
+        "typical_interval_days": 30
+    },
 }
+
+PERIODIC_SPECS_OVERRIDE_FILE = os.path.join(DATA_RAW, "periodic_specs.json")
+
+def load_periodic_specs():
+    """Load cấu hình biến periodic từ file JSON nếu có"""
+    if not os.path.exists(PERIODIC_SPECS_OVERRIDE_FILE):
+        return DEFAULT_PERIODIC_SPECS
+
+    try:
+        with open(PERIODIC_SPECS_OVERRIDE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        raise ValueError(f"Invalid periodic spec file: {PERIODIC_SPECS_OVERRIDE_FILE}. Error: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(f"{PERIODIC_SPECS_OVERRIDE_FILE} must be an object.")
+
+    if not data:
+        return DEFAULT_PERIODIC_SPECS
+
+    required_fields = {"folder", "col_name", "output_file"}
+
+    for key, spec in data.items():
+        if not isinstance(spec, dict):
+            raise ValueError(f"Periodic Dataset '{key}' must be an object.")
+
+        missing = required_fields - set(spec.keys())
+        if missing:
+            raise ValueError(f"Periodic Dataset '{key}' is missing required fields: {sorted(missing)}")
+
+        # Gán giá trị mặc định
+        spec.setdefault("date_pattern", "%Y-%m-%d")
+        spec.setdefault("file_pattern", "{date}.tif")
+        spec.setdefault("method", "mean")
+        spec.setdefault("typical_interval_days", 16)
+
+    return data
+
+
+PERIODIC_SPECS = load_periodic_specs()
+
