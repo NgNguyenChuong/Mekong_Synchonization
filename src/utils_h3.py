@@ -150,5 +150,5 @@ def sample_multiband_robust(tif_path, point_groups, h3_geoms=None, n_random=15):
                     for cell_idx, valid_vals in cell_valid_vals.items():
                         if valid_vals:
                             vals[cell_idx][band_idx] = float(sum(valid_vals) / len(valid_vals))
-
+                            
         return vals, nodata
