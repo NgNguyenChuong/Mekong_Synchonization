@@ -1,14 +1,11 @@
 import os
-import ee
-import geemap
 import geopandas as gpd
 import h3
 from shapely.geometry import Polygon
 from shapely.strtree import STRtree
 from shapely.ops import unary_union
 from config import (
-    GEE_PROJECT, GEE_TARGET_AREAS, GEE_ADMIN_COLLECTION, GEE_ADMIN_NAME_FIELD,
-    ENABLE_GEE_FALLBACK, DATA_RAW, SHAPEFILE_RAW, SHAPEFILE_CLEAN,
+    DATA_RAW, SHAPEFILE_RAW, SHAPEFILE_CLEAN,
     CRS_METRIC, CRS_WGS84, MIN_ISLAND_AREA_KM2,
     H3_GRID_GEOJSON, H3_RESOLUTION, BUFFER_DIST
 )
@@ -39,12 +36,12 @@ def _resolve_input_shapefile():
             "Keep exactly one .shp before running pipeline:" + names
         )
 
+    # bỏ fallback 
     # if ENABLE_GEE_FALLBACK:
     #     return download_shapefile_gee()
 
     raise FileNotFoundError(
         "No input shapefile found. Add exactly one .shp to data/raw. "
-        "If needed, enable GEE fallback with ENABLE_GEE_FALLBACK=true."
     )
 
 
@@ -109,13 +106,13 @@ def clean_shapefile(input_shapefile):
 # -----------------------------------------------------------
 def generate_h3_grid(clean_shapefile_path):
     if os.path.exists(H3_GRID_GEOJSON) and os.path.getmtime(H3_GRID_GEOJSON) >= os.path.getmtime(clean_shapefile_path):
-        print(f"   ✅ H3 Grid already exists: {H3_GRID_GEOJSON}")
+        print(f"    H3 Grid already exists: {H3_GRID_GEOJSON}")
         return
 
     print("   HEX Generating H3 Grid (v4)...")
 
     if not os.path.exists(clean_shapefile_path):
-        raise FileNotFoundError(f"❌ Cleaned shapefile missing: {clean_shapefile_path}")
+        raise FileNotFoundError(f" Cleaned shapefile missing: {clean_shapefile_path}")
 
     gdf = gpd.read_file(clean_shapefile_path).to_crs(CRS_WGS84)
     
@@ -157,7 +154,7 @@ def generate_h3_grid(clean_shapefile_path):
     print(f"   --> Generated {len(hex_set)} candidate cells.")
 
     # --- CLIPPING (OPTIMIZED với STRtree) ---
-    print("   ✂️  Clipping to exact boundary...")
+    print("     Clipping to exact boundary...")
     union_poly = unary_union(gdf.geometry)
 
     # OPTIMIZED: Tạo tất cả hex polygons trước
@@ -187,7 +184,7 @@ def generate_h3_grid(clean_shapefile_path):
     )
     
     gdf_hex.to_file(H3_GRID_GEOJSON, driver="GeoJSON")
-    print(f"   💾 H3 Grid saved: {H3_GRID_GEOJSON} ({len(gdf_hex)} cells)")
+    print(f"    H3 Grid saved: {H3_GRID_GEOJSON} ({len(gdf_hex)} cells)")
 
 
 # -----------------------------------------------------------

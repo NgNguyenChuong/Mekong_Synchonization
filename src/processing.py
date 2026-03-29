@@ -25,7 +25,7 @@ def extract_generic(spec_name, spec_config, h3_data, raw_root_dir):
     records = []
     sorted_items = sorted(file_map.items())
     
-    # print(f"   ⏳ Extracting {spec_name}...") 
+    # print(f"    Extracting {spec_name}...") 
     
     for (year, month), tif_path in sorted_items:
         # Lấy mẫu dữ liệu (Robust sampling)
@@ -45,126 +45,128 @@ def extract_generic(spec_name, spec_config, h3_data, raw_root_dir):
                 
     return pd.DataFrame(records)
 
+
+# bỏ tính năng fill nodata.
 # ---------------------------------------------------------
 # CORE LOGIC: SPATIAL FILL (K-RING) - OPTIMIZED
 # ---------------------------------------------------------
-def fill_spatial_generic(df, col_name):
-    if df.empty: return df
+# def fill_spatial_generic(df, col_name):
+#     if df.empty: return df
 
-    # Xử lý giá trị rác -9999 thành NaN
-    df[col_name] = df[col_name].replace(-9999.0, np.nan)
+#     # Xử lý giá trị rác -9999 thành NaN
+#     df[col_name] = df[col_name].replace(-9999.0, np.nan)
 
-    # Nếu không còn thiếu thì trả về luôn
-    if not df[col_name].isna().any():
-        return df
+#     # Nếu không còn thiếu thì trả về luôn
+#     if not df[col_name].isna().any():
+#         return df
 
-    h3_ids = df["h3_index"].unique()
-    max_k = FILL_CONFIG["MAX_K"]
-    min_nei = FILL_CONFIG["MIN_NEI"]
+#     h3_ids = df["h3_index"].unique()
+#     max_k = FILL_CONFIG["MAX_K"]
+#     min_nei = FILL_CONFIG["MIN_NEI"]
 
-    # Precompute k-ring cho tất cả các ô
-    try:
-        k_ring_map = {h: {k: list(h3.grid_disk(h, k)) for k in range(1, max_k + 1)} for h in h3_ids}
-    except AttributeError:
-        k_ring_map = {h: {k: list(h3.k_ring(h, k)) for k in range(1, max_k + 1)} for h in h3_ids}
+#     # Precompute k-ring cho tất cả các ô
+#     try:
+#         k_ring_map = {h: {k: list(h3.grid_disk(h, k)) for k in range(1, max_k + 1)} for h in h3_ids}
+#     except AttributeError:
+#         k_ring_map = {h: {k: list(h3.k_ring(h, k)) for k in range(1, max_k + 1)} for h in h3_ids}
 
-    # OPTIMIZED: Tạo dict tra cứu nhanh bằng vectorized indexing
-    df_indexed = df.set_index(['h3_index', 'date'])[col_name]
-    val_map = df_indexed.to_dict()
+#     # OPTIMIZED: Tạo dict tra cứu nhanh bằng vectorized indexing
+#     df_indexed = df.set_index(['h3_index', 'date'])[col_name]
+#     val_map = df_indexed.to_dict()
 
-    # Tìm các ô cần fill
-    missing_mask = df[col_name].isna()
-    missing_rows = df.loc[missing_mask, ['h3_index', 'date']].values
+#     # Tìm các ô cần fill
+#     missing_mask = df[col_name].isna()
+#     missing_rows = df.loc[missing_mask, ['h3_index', 'date']].values
 
-    # Chỉ xử lý các ô thiếu dữ liệu
-    for h, date in missing_rows:
-        key = (h, date)
+#     # Chỉ xử lý các ô thiếu dữ liệu
+#     for h, date in missing_rows:
+#         key = (h, date)
 
-        for k in range(1, max_k + 1):
-            neighs = k_ring_map.get(h, {}).get(k, [])
-            valid_vals = [val_map[(n, date)] for n in neighs
-                         if (n, date) in val_map and pd.notna(val_map[(n, date)])]
+#         for k in range(1, max_k + 1):
+#             neighs = k_ring_map.get(h, {}).get(k, [])
+#             valid_vals = [val_map[(n, date)] for n in neighs
+#                          if (n, date) in val_map and pd.notna(val_map[(n, date)])]
 
-            if len(valid_vals) >= min_nei:
-                val_map[key] = sum(valid_vals) / len(valid_vals)
-                break
+#             if len(valid_vals) >= min_nei:
+#                 val_map[key] = sum(valid_vals) / len(valid_vals)
+#                 break
 
-    # OPTIMIZED: Cập nhật lại DataFrame bằng MultiIndex lookup
-    keys = list(zip(df['h3_index'], df['date']))
-    df[col_name] = [val_map.get(k) for k in keys]
+#     # OPTIMIZED: Cập nhật lại DataFrame bằng MultiIndex lookup
+#     keys = list(zip(df['h3_index'], df['date']))
+#     df[col_name] = [val_map.get(k) for k in keys]
 
-    return df
+#     return df
 
 # ---------------------------------------------------------
 # CORE LOGIC: FINAL FILL (NEAREST NEIGHBOR) - OPTIMIZED
 # ---------------------------------------------------------
-def fill_final_nearest(df, col_name):
-    """
-    Chiến lược cứu hộ cuối cùng (Last Resort):
-    Tìm 1 ô hàng xóm gần nhất (Nearest Neighbor) trên toàn bản đồ có dữ liệu
-    và sao chép dữ liệu sang ô bị thiếu.
-    Dùng cho các đảo xa hoặc vùng mây quá lớn mà Spatial Fill (K-Ring) bó tay.
-    """
-    # 1. Kiểm tra xem còn thiếu không
-    missing_mask = df[col_name].isna()
-    if not missing_mask.any():
-        return df
+# def fill_final_nearest(df, col_name):
+#     """
+#     Chiến lược cứu hộ cuối cùng (Last Resort):
+#     Tìm 1 ô hàng xóm gần nhất (Nearest Neighbor) trên toàn bản đồ có dữ liệu
+#     và sao chép dữ liệu sang ô bị thiếu.
+#     Dùng cho các đảo xa hoặc vùng mây quá lớn mà Spatial Fill (K-Ring) bó tay.
+#     """
+#     # 1. Kiểm tra xem còn thiếu không
+#     missing_mask = df[col_name].isna()
+#     if not missing_mask.any():
+#         return df
 
-    print(f"   🔧 [Final Fill] Found {missing_mask.sum()} isolated cells. Running Nearest Neighbor...")
+#     print(f"   🔧 [Final Fill] Found {missing_mask.sum()} isolated cells. Running Nearest Neighbor...")
 
-    # 2. Tách dữ liệu Tốt (Nguồn) và Xấu (Đích)
-    bad_ids = df[missing_mask]["h3_index"].unique()
-    all_ids = df["h3_index"].unique()
-    # Good ids là những ô KHÔNG nằm trong bad_ids
-    good_ids = list(set(all_ids) - set(bad_ids))
+#     # 2. Tách dữ liệu Tốt (Nguồn) và Xấu (Đích)
+#     bad_ids = df[missing_mask]["h3_index"].unique()
+#     all_ids = df["h3_index"].unique()
+#     # Good ids là những ô KHÔNG nằm trong bad_ids
+#     good_ids = list(set(all_ids) - set(bad_ids))
 
-    if not good_ids:
-        return df
+#     if not good_ids:
+#         return df
 
-    # 3. Xây dựng cây tìm kiếm khoảng cách (KDTree)
-    # Hỗ trợ cả H3 v3 và v4
-    try:
-        good_coords = [h3.cell_to_latlng(h) for h in good_ids]
-        bad_coords = [h3.cell_to_latlng(h) for h in bad_ids]
-    except AttributeError:
-        good_coords = [h3.h3_to_geo(h) for h in good_ids]
-        bad_coords = [h3.h3_to_geo(h) for h in bad_ids]
+#     # 3. Xây dựng cây tìm kiếm khoảng cách (KDTree)
+#     # Hỗ trợ cả H3 v3 và v4
+#     try:
+#         good_coords = [h3.cell_to_latlng(h) for h in good_ids]
+#         bad_coords = [h3.cell_to_latlng(h) for h in bad_ids]
+#     except AttributeError:
+#         good_coords = [h3.h3_to_geo(h) for h in good_ids]
+#         bad_coords = [h3.h3_to_geo(h) for h in bad_ids]
 
-    tree = cKDTree(good_coords)
-    # Tìm 1 điểm gần nhất (k=1)
-    dists, indices = tree.query(bad_coords, k=1)
+#     tree = cKDTree(good_coords)
+#     # Tìm 1 điểm gần nhất (k=1)
+#     dists, indices = tree.query(bad_coords, k=1)
 
-    # 4. Map ô Xấu -> ô Tốt gần nhất
-    rescue_map = {bad_ids[i]: good_ids[indices[i]] for i in range(len(bad_ids))}
+#     # 4. Map ô Xấu -> ô Tốt gần nhất
+#     rescue_map = {bad_ids[i]: good_ids[indices[i]] for i in range(len(bad_ids))}
 
-    # 5. OPTIMIZED: Điền dữ liệu bằng vectorized merge thay vì apply
-    # Tạo DataFrame tra cứu dữ liệu tốt
-    df_good = df[df["h3_index"].isin(good_ids)][['h3_index', 'date', col_name]].copy()
-    df_good = df_good.rename(columns={'h3_index': 'source_h3', col_name: 'source_val'})
+#     # 5. OPTIMIZED: Điền dữ liệu bằng vectorized merge thay vì apply
+#     # Tạo DataFrame tra cứu dữ liệu tốt
+#     df_good = df[df["h3_index"].isin(good_ids)][['h3_index', 'date', col_name]].copy()
+#     df_good = df_good.rename(columns={'h3_index': 'source_h3', col_name: 'source_val'})
 
-    # Tạo cột source_h3 cho các ô bad
-    df['source_h3'] = df['h3_index'].map(rescue_map)
+#     # Tạo cột source_h3 cho các ô bad
+#     df['source_h3'] = df['h3_index'].map(rescue_map)
 
-    # Merge để lấy giá trị từ ô nguồn
-    df = df.merge(
-        df_good,
-        left_on=['source_h3', 'date'],
-        right_on=['source_h3', 'date'],
-        how='left'
-    )
+#     # Merge để lấy giá trị từ ô nguồn
+#     df = df.merge(
+#         df_good,
+#         left_on=['source_h3', 'date'],
+#         right_on=['source_h3', 'date'],
+#         how='left'
+#     )
 
-    # Chỉ fill những ô đang thiếu
-    fill_mask = df[col_name].isna() & df['source_val'].notna()
-    df.loc[fill_mask, col_name] = df.loc[fill_mask, 'source_val']
+#     # Chỉ fill những ô đang thiếu
+#     fill_mask = df[col_name].isna() & df['source_val'].notna()
+#     df.loc[fill_mask, col_name] = df.loc[fill_mask, 'source_val']
 
-    # Xóa cột tạm
-    df = df.drop(columns=['source_h3', 'source_val'])
+#     # Xóa cột tạm
+#     df = df.drop(columns=['source_h3', 'source_val'])
 
-    # Fill nốt các lỗ hổng thời gian nếu ô nguồn cũng bị thiếu 1 vài ngày
-    if df[col_name].isna().any():
-        df[col_name] = df[col_name].interpolate(method='linear', limit_direction='both')
+#     # Fill nốt các lỗ hổng thời gian nếu ô nguồn cũng bị thiếu 1 vài ngày
+#     if df[col_name].isna().any():
+#         df[col_name] = df[col_name].interpolate(method='linear', limit_direction='both')
 
-    return df
+#     return df
 
 # ---------------------------------------------------------
 # WORKER FUNCTION (Cho Multiprocessing)
@@ -175,34 +177,34 @@ def process_single_dataset(args):
     Args: (key, spec, h3_data_bundle)
     """
     key, spec, h3_data_bundle = args
-    print(f"🚀 [Start] {key.upper()} processing...")
+    print(f" [Start] {key.upper()} processing...")
     
     try:
         # 1. Extract
         df = extract_generic(key, spec, h3_data_bundle, DATA_RAW)
         if df.empty:
-            print(f"⚠️ [Skip] {key.upper()} - No data found.")
+            print(f" [Skip] {key.upper()} - No data found.")
             return key
             
-        # 2. Check Missing & Cleanup
-        col_name = spec["col_name"]
-        # Convert rác thành NaN trước khi check
-        if col_name in df.columns:
-            df[col_name] = df[col_name].replace(-9999.0, np.nan)
-            nan_raw = df[col_name].isna().sum()
-        else:
-            nan_raw = 0
-        
-        # 3. Fill Strategy
-        if nan_raw > 0:
-            # Bước A: Spatial Fill (Hàng xóm lân cận)
-            df = fill_spatial_generic(df, col_name)
-            
-            # Bước B: Final Fill (Hàng xóm gần nhất toàn cục - Cứu đảo xa)
-            nan_remaining = df[col_name].isna().sum()
-            if nan_remaining > 0:
-                df = fill_final_nearest(df, col_name)
-            
+        # 2. Check Missing & Cleanup (disabled)
+        # col_name = spec["col_name"]
+        # # Convert rác thành NaN trước khi check
+        # if col_name in df.columns:
+        #     df[col_name] = df[col_name].replace(-9999.0, np.nan)
+        #     nan_raw = df[col_name].isna().sum()
+        # else:
+        #     nan_raw = 0
+        # 
+        # # 3. Fill Strategy (disabled)
+        # if nan_raw > 0:
+        #     # Bước A: Spatial Fill (Hàng xóm lân cận)
+        #     df = fill_spatial_generic(df, col_name)
+        # 
+        #     # Bước B: Final Fill (Hàng xóm gần nhất toàn cục - Cứu đảo xa)
+        #     nan_remaining = df[col_name].isna().sum()
+        #     if nan_remaining > 0:
+        #         df = fill_final_nearest(df, col_name)
+        # 
         # 4. Save
         out_path = os.path.join(DATA_PROCESSED, spec["output_file"])
         df.to_csv(out_path, index=False)
