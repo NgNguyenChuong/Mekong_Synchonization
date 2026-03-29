@@ -8,7 +8,9 @@ from rasterstats import zonal_stats
 from scipy.spatial import cKDTree
 from datetime import datetime, timedelta
 from utils_h3 import index_files, sample_multiband_robust
-from config import FILL_CONFIG, DATA_PROCESSED, DATA_RAW,DATA_SPECS, STATIC_SPECS
+from config import DATA_PROCESSED, DATA_RAW,DATA_SPECS, STATIC_SPECS, PERIODIC_SPECS
+import re
+import glob as glob_module
 
 # ---------------------------------------------------------
 # CORE LOGIC: EXTRACT
@@ -288,7 +290,7 @@ def extract_static_generic(spec_name, spec_config, h3_data_bundle, raw_root_dir)
     method = spec_config.get("method", "mean")
 
     if not os.path.exists(file_path):
-        print(f"⚠️ Không tìm thấy file: {file_path}")
+        print(f"Không tìm thấy file: {file_path}")
         return pd.DataFrame()
 
     gdf = gpd.GeoDataFrame({"h3_index": h3_ids}, geometry=h3_geoms, crs="EPSG:4326")
@@ -446,9 +448,6 @@ def merge_static_datasets():
 # ---------------------------------------------------------
 # PERIODIC DATA PROCESSING (Sentinel-2, NDVI, v.v.)
 # ---------------------------------------------------------
-import re
-import glob as glob_module
-from config import PERIODIC_SPECS
 
 
 def index_periodic_files(input_dir, file_pattern, date_pattern):
@@ -558,37 +557,22 @@ def extract_periodic_generic(spec_name, spec_config, h3_data, raw_root_dir, from
     return pd.DataFrame(records)
 
 
-def fill_periodic_data(df, col_name, fill_method="interpolate", typical_interval_days=16):
-    """
-    Fill missing data cho periodic datasets.
-
-    Args:
-        fill_method:
-            - "none": Không fill
-            - "interpolate": Nội suy tuyến tính theo thời gian
-            - "forward": Dùng giá trị trước đó
-            - "backward": Dùng giá trị sau đó
-    """
-    if fill_method == "none" or df.empty:
-        return df
-
-    # Fill theo từng h3_index
-    filled_dfs = []
-
-    for h3_id in df["h3_index"].unique():
-        h3_df = df[df["h3_index"] == h3_id].copy()
-        h3_df = h3_df.sort_values("date")
-
-        if fill_method == "interpolate":
-            h3_df[col_name] = h3_df[col_name].interpolate(method='linear')
-        elif fill_method == "forward":
-            h3_df[col_name] = h3_df[col_name].ffill()
-        elif fill_method == "backward":
-            h3_df[col_name] = h3_df[col_name].bfill()
-
-        filled_dfs.append(h3_df)
-
-    return pd.concat(filled_dfs, ignore_index=True)
+# bỏ tính năng fill periodic data.
+# def fill_periodic_data(df, col_name, fill_method="interpolate", typical_interval_days=16):
+#     if fill_method == "none" or df.empty:
+#         return df
+#     filled_dfs = []
+#     for h3_id in df["h3_index"].unique():
+#         h3_df = df[df["h3_index"] == h3_id].copy()
+#         h3_df = h3_df.sort_values("date")
+#         if fill_method == "interpolate":
+#             h3_df[col_name] = h3_df[col_name].interpolate(method='linear')
+#         elif fill_method == "forward":
+#             h3_df[col_name] = h3_df[col_name].ffill()
+#         elif fill_method == "backward":
+#             h3_df[col_name] = h3_df[col_name].bfill()
+#         filled_dfs.append(h3_df)
+#     return pd.concat(filled_dfs, ignore_index=True)
 
 
 def process_single_periodic_dataset(args):
@@ -626,15 +610,10 @@ def process_single_periodic_dataset(args):
             print(f"⚠️ [Skip] PERIODIC {key.upper()} - Không có dữ liệu.")
             return key
 
-        # 2. Fill (nếu cần)
-        fill_method = spec.get("fill_method", "none")
-        if fill_method != "none" and not options.get('no_fill', False):
-            df = fill_periodic_data(
-                df,
-                spec["col_name"],
-                fill_method,
-                spec.get("typical_interval_days", 16)
-            )
+        # 2. Fill (disabled)
+        # fill_method = spec.get("fill_method", "none")
+        # if fill_method != "none" and not options.get('no_fill', False):
+        #     df = fill_periodic_data(df, spec["col_name"], fill_method, spec.get("typical_interval_days", 16))
 
         # 3. Save
         out_path = os.path.join(DATA_PROCESSED, spec["output_file"])
