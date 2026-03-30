@@ -1,247 +1,347 @@
-# H3 Geo Pipeline (Generalized)
+# 🌏 Mekong DGGS - H3 Geo Pipeline
 
-This project converts daily raster climate data into H3 time series for any region.
+<p align="center">
+  <strong>Discrete Global Grid System Pipeline for Mekong Delta Climate Data</strong>
+</p>
 
-The workflow is now generalized:
-- You can place your own boundary shapefile in `data/raw`.
-- You can place your own raster datasets in `data/raw/<dataset_folder>`.
-- Run `src/pipeline.py` to generate:
-`data/processed/h3_grid.geojson` and per-dataset H3 CSV outputs.
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.13+-blue.svg" alt="Python">
+  <img src="https://img.shields.io/badge/H3-Resolution%207-green.svg" alt="H3">
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
+</p>
 
-## 0. Setup environment
+---
 
-Recommended Python version: `3.13.5`
+## 📋 Overview
 
-Using a virtual environment is strongly recommended to avoid dependency conflicts.
+**Mekong_DGGS** is a geospatial data processing pipeline that converts raster climate data into H3 hexagonal grid time series. Designed for the **Mekong Delta (ĐBSCL)** region, this pipeline transforms GeoTIFF rasters and Shapefiles into structured tabular data for analysis and modeling.
 
-Create virtual environment:
+### Key Features
 
-```bash
-# Windows
-python -m venv env
+- 🔷 **H3 Hexagonal Grid** - Resolution 7 (~5.16 km² per cell)
+- ⚡ **Parallel Processing** - Multi-core extraction with ProcessPoolExecutor
+- 🔄 **Smart Gap Filling** - K-Ring spatial + KDTree nearest neighbor fallback
+- 📊 **Multi-data Support** - Dynamic, Static, and Periodic datasets
 
-# macOS/Linux
-python3 -m venv env
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         PREPROCESSING                            │
+│  Shapefile → Clean → Generate H3 Grid (h3_grid.geojson)         │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      PARALLEL PROCESSING                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐       │
+│  │   DYNAMIC    │  │    STATIC    │  │     PERIODIC     │       │
+│  │  (Daily)     │  │  (One-time)  │  │  (Satellite)     │       │
+│  │              │  │              │  │                  │       │
+│  │ • Rain       │  │ • DEM        │  │ • Sentinel NDVI  │       │
+│  │ • Temp       │  │ • Landcover  │  │ • Sentinel NDWI  │       │
+│  │ • Humidity   │  │ • River      │  │                  │       │
+│  │ • Solar      │  │              │  │                  │       │
+│  └──────────────┘  └──────────────┘  └──────────────────┘       │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                           OUTPUTS                                │
+│  • FINAL_MERGED_DATASET.csv  (Dynamic)                          │
+│  • DIM_H3_STATIC.csv         (Static)                           │
+│  • PERIODIC_MERGED.csv       (Periodic)                         │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-Activate virtual environment:
+---
+
+## 🚀 Quick Start
+
+### 1. Setup Environment
+
+**Recommended Python version:** `3.13.5`
 
 ```bash
-# Windows (PowerShell)
+# Create virtual environment
+python -m venv env
+
+# Activate (Windows PowerShell)
 .\env\Scripts\Activate.ps1
 
-# Windows (CMD)
-env\Scripts\activate.bat
-
-# macOS/Linux
+# Activate (macOS/Linux)
 source env/bin/activate
 ```
 
-## 1. Install
+### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 2. Input Structure
+### 3. Prepare Data
 
-### Boundary shapefile
-Provide exactly one `.shp` file in `data/raw`.
+Place your data in `data/raw/`:
 
-Required sidecar files usually include `.dbf`, `.shx`, `.prj` in the same folder.
-
-### Raster datasets
-By default, these folders are expected (can be customized with `dataset_specs.json`):
-- `data/raw/daily_rain`
-- `data/raw/daily_solar`
-- `data/raw/daily_temp_avg`
-- `data/raw/daily_temp_max`
-- `data/raw/daily_temp_min`
-- `data/raw/daily_humid`
-
-Raster filename must contain `YYYY_M` or `YYYY_MM` so the pipeline can map year-month.
-
-Example:
-- `rain_2024_01.tif`
-- `temp_2025_7.tif`
-
-## 3. Optional Dataset Customization
-
-Create `data/raw/dataset_specs.json` to override default dataset config.
-
-Example:
-
-```json
-{
-	"rain": {
-		"folder": "daily_rain",
-		"col_name": "rain_mm",
-		"output_file": "h3_rain_daily_filled.csv"
-	},
-	"wind": {
-		"folder": "daily_wind",
-		"col_name": "wind_mps",
-		"output_file": "h3_wind_daily_filled.csv"
-	}
-}
+```
+data/raw/
+├── boundary_input.shp          # Boundary shapefile (required)
+├── boundary_input.dbf/.shx/.prj
+├── daily_rain/                 # Dynamic: rainfall
+│   ├── 2024_01.tif
+│   └── 2024_02.tif
+├── daily_temp_avg/             # Dynamic: temperature
+├── daily_humid/                # Dynamic: humidity
+├── daily_solar/                # Dynamic: solar radiation
+├── dem/
+│   └── DEM_DBSCL.tif           # Static: elevation
+├── landcover/
+│   └── LandCover_DBSCL_2021.tif # Static: land use
+├── river/
+│   └── River_DBSCL.tif         # Static: river proximity
+└── sentinel2_ndvi/             # Periodic: satellite imagery
+    ├── NDVI_2024-01-15.tif
+    └── NDWI_2024-01-15.tif
 ```
 
-## 4. Run Pipeline
-
-```bash
-python src/pipeline.py
-```
-
-Or use the CLI entrypoint with argument parsing:
+### 4. Run Pipeline
 
 ```bash
 python main.py
 ```
 
-Pipeline steps:
-1. Resolve input boundary shapefile.
-2. Clean/dissolve boundary (optional small island filtering).
-3. Build H3 grid clipped to boundary.
-4. Extract daily raster values for each H3 cell.
-5. Fill missing values (spatial + nearest-neighbor fallback).
-6. Save each dataset CSV and merge to final file.
+---
 
-## 4.1 CLI Arguments (Parse Values)
+## 📊 Data Types
 
-Date arguments use format `YYYY-MM`.
+### Dynamic Data (Daily)
 
-### Basic runs
+| Dataset   | Folder           | Column        | Description              |
+|-----------|------------------|---------------|--------------------------|
+| rain      | daily_rain       | rain_mm       | Rainfall (mm)            |
+| temp_avg  | daily_temp_avg   | temp_c        | Average temperature (°C) |
+| temp_max  | daily_temp_max   | temp_max_c    | Maximum temperature (°C) |
+| temp_min  | daily_temp_min   | temp_min_c    | Minimum temperature (°C) |
+| humidity  | daily_humid      | rh_percent    | Relative humidity (%)    |
+| solar     | daily_solar      | solar         | Solar radiation          |
+
+**File format:** `{year}_{month}.tif` with each band = 1 day
+
+### Static Data (One-time)
+
+| Dataset   | Method         | Output                          |
+|-----------|----------------|---------------------------------|
+| dem       | mean           | Average elevation per H3 cell   |
+| landcover | all_classes    | % of each land class per cell   |
+| river     | min_distance   | Distance to nearest river (km)  |
+
+### Periodic Data (Satellite)
+
+| Dataset       | Pattern           | Method | Description          |
+|---------------|-------------------|--------|----------------------|
+| sentinel_ndvi | NDVI_{date}.tif   | mean   | Vegetation index     |
+| sentinel_ndwi | NDWI_{date}.tif   | mean   | Water index          |
+
+---
+
+## 🔧 Extraction Methods
+
+### Point Sampling (Dynamic)
+
+```
+     H3 Hexagon Cell
+          ╱╲
+         ╱  ╲
+        ╱ M2 ╲
+       ╱──────╲
+      ╱   M1   ╲
+     ╱    ●     ╲ M3      ● = Centroid (primary)
+    ╱   (C)     ╲         M = Midpoint (fallback)
+    ╲           ╱
+     ╲   M6   ╱
+      ╲──────╱
+       ╲ M5 ╱
+        ╲  ╱
+         ╲╱
+          M4
+
+Step 1: Sample at Centroid (C)
+Step 2: If C = NoData → Average of 6 Midpoints (M1-M6)
+```
+
+### Zonal Statistics (Static)
+
+| Method        | Use Case    | Description                           |
+|---------------|-------------|---------------------------------------|
+| mean/max/min  | DEM         | Basic zonal statistics                |
+| all_classes   | Landcover   | Calculate % of each class in cell     |
+| min_distance  | River       | KDTree search for nearest river pixel |
+
+### Gap Filling Strategy
+
+1. **K-Ring Spatial Fill** - Average of neighboring cells (K=1,2,3)
+2. **KDTree Nearest** - Copy from geographically nearest valid cell
+3. **Temporal Interpolate** - Linear interpolation for periodic data
+
+---
+
+## 💻 CLI Usage
+
+### Basic Commands
 
 ```bash
-# Run all (dynamic + static + periodic if configured)
+# Run full pipeline
 python main.py
 
-# Show detected datasets and periodic config status
+# List detected datasets
 python main.py --list-datasets
 
-# Dry-run only (show plan, do not execute)
+# Dry-run (show plan only)
 python main.py --dry-run
 ```
 
-### Date filtering
+### Date Filtering
 
 ```bash
-# Run one month
+# Single month
 python main.py --month 2024-03
 
-# Run a range (inclusive by month)
-python main.py --from 2024-01 --to 2024-03
+# Date range
+python main.py --from 2024-01 --to 2024-06
 ```
 
-### Select processing scope
+### Processing Scope
 
 ```bash
-# Skip static datasets
+# Skip specific dataset types
 python main.py --skip-static
-
-# Skip dynamic datasets
 python main.py --skip-dynamic
-
-# Skip periodic datasets
 python main.py --skip-periodic
 
-# Run only periodic datasets
+# Run only periodic
 python main.py --only-periodic
 ```
 
-### Dataset and performance options
+### Performance Options
 
 ```bash
-# Run only selected dynamic datasets
+# Select specific datasets
 python main.py --datasets rain,solar,temp_avg
 
-# Disable fill missing values
-python main.py --no-fill
-
-# Disable merge outputs
-python main.py --no-merge
-
-# Skip preprocessing if grid already exists
-python main.py --skip-preprocess
-
-# Set worker count
-python main.py --workers 4
+# Control processing
+python main.py --no-fill          # Skip gap filling
+python main.py --no-merge         # Skip merging outputs
+python main.py --skip-preprocess  # Use existing H3 grid
+python main.py --workers 4        # Set worker count
 ```
 
-### Periodic-only examples
+---
 
-```bash
-# Periodic only in a date range
-python main.py --only-periodic --from 2024-01 --to 2024-03 --skip-preprocess
+## 📁 Output Structure
 
-# Periodic only, no fill
-python main.py --only-periodic --from 2024-01 --to 2024-03 --skip-preprocess --no-fill
+```
+data/processed/
+├── h3_grid.geojson              # H3 hexagonal grid
+├── h3_rain_daily_filled.csv     # Rain time series
+├── h3_temp_daily_filled.csv     # Temperature time series
+├── h3_rh_daily_filled.csv       # Humidity time series
+├── h3_solar_daily_filled.csv    # Solar time series
+├── h3_dem.csv                   # DEM statistics
+├── h3_landcover.csv             # Land cover fractions
+├── h3_river.csv                 # River proximity
+├── h3_sentinel_ndvi.csv         # NDVI time series
+├── h3_sentinel_ndwi.csv         # NDWI time series
+├── FINAL_MERGED_DATASET.csv     # Merged dynamic data
+├── DIM_H3_STATIC.csv            # Merged static data
+└── PERIODIC_MERGED.csv          # Merged periodic data
 ```
 
-## 4.2 Periodic method configuration (zonal_stats)
+---
 
-Periodic extraction uses `method` from periodic specs and passes it to `zonal_stats`.
+## ⚙️ Configuration
 
-- Edit default specs in `src/config.py`, or
-- Create override file `data/raw/periodic_specs.json`
+### Environment Variables
 
-Example:
+| Variable            | Default | Description                      |
+|---------------------|---------|----------------------------------|
+| H3_RESOLUTION       | 7       | H3 grid resolution (0-15)        |
+| BUFFER_DIST         | 0       | Boundary buffer in meters        |
+| MIN_ISLAND_AREA_KM2 | 0       | Remove islands smaller than (km²)|
+| ENABLE_GEE_FALLBACK | false   | Enable Google Earth Engine       |
+
+### Custom Dataset Specs
+
+Override defaults by creating JSON files in `data/raw/`:
+
+- `dataset_specs.json` - Dynamic datasets
+- `static_specs.json` - Static datasets
+- `periodic_specs.json` - Periodic datasets
+
+Example `periodic_specs.json`:
 
 ```json
 {
-	"sentinel_ndvi": {
-		"folder": "sentinel2_ndvi",
-		"file_pattern": "NDVI_{date}.tif",
-		"date_pattern": "%Y-%m-%d",
-		"col_name": "ndvi",
-		"output_file": "h3_sentinel_ndvi.csv",
-		"method": "mean",
-		"fill_method": "interpolate",
-		"typical_interval_days": 30
-	},
-	"sentinel_ndwi": {
-		"folder": "sentinel2_ndvi",
-		"file_pattern": "NDWI_{date}.tif",
-		"date_pattern": "%Y-%m-%d",
-		"col_name": "ndwi",
-		"output_file": "h3_sentinel_ndwi.csv",
-		"method": "median",
-		"fill_method": "interpolate",
-		"typical_interval_days": 30
-	}
+  "sentinel_ndvi": {
+    "folder": "sentinel2_ndvi",
+    "file_pattern": "NDVI_{date}.tif",
+    "date_pattern": "%Y-%m-%d",
+    "col_name": "ndvi",
+    "output_file": "h3_sentinel_ndvi.csv",
+    "method": "mean",
+    "fill_method": "interpolate",
+    "typical_interval_days": 30
+  }
 }
 ```
 
-## 5. Outputs
+---
 
-- `data/processed/h3_grid.geojson`
-- `data/processed/h3_<dataset>_daily_filled.csv`
-- `data/processed/FINAL_MERGED_DATASET.csv`
+## 📚 Project Structure
 
-## 6. Important Environment Variables
+```
+Mekong_DGGS/
+├── main.py                 # CLI entry point
+├── requirements.txt        # Python dependencies
+├── src/
+│   ├── config.py           # Configuration & dataset specs
+│   ├── preprocessing.py    # H3 grid generation
+│   ├── processing.py       # Data extraction & merging
+│   ├── utils_h3.py         # H3 utility functions
+│   └── add_on_component/   # Additional modules
+│       ├── getWaterLevel.py    # MRC water level API
+│       ├── format_waterlevel.py
+│       └── format_sealevel.py
+├── data/
+│   ├── raw/                # Input data
+│   ├── processed/          # Output data
+│   └── water/              # Water level data
+└── notebooks/              # Jupyter notebooks for data download
+```
 
-- `H3_RESOLUTION`: H3 resolution (default `7`)
-- `BUFFER_DIST`: boundary buffer in meters before polyfill (default `0`)
-- `MIN_ISLAND_AREA_KM2`: remove tiny polygons below this area (default `0`)
-- `ENABLE_GEE_FALLBACK`: `true/false` (default `false`)
+---
 
-## 7. Optional GEE Fallback
+## 🛠️ Technologies
 
-If no local shapefile is available, you can enable automatic download from Google Earth Engine:
+| Library     | Purpose                            |
+|-------------|------------------------------------|
+| h3          | Hexagonal grid system              |
+| geopandas   | Vector data processing             |
+| rasterio    | GeoTIFF read/write                 |
+| rasterstats | Zonal statistics                   |
+| scipy       | KDTree spatial search              |
+| pandas      | Tabular data processing            |
+| numpy       | Numerical computation              |
 
-- Set `ENABLE_GEE_FALLBACK=true`
-- Optionally configure:
-`GEE_PROJECT`, `GEE_ADMIN_COLLECTION`, `GEE_ADMIN_NAME_FIELD`, `GEE_TARGET_AREAS` in `src/config.py`
+---
 
-Local shapefile in `data/raw` still has higher priority when present.
+## 📖 Documentation
 
+For detailed technical documentation, see [DOCUMENTATION.md](DOCUMENTATION.md).
 
+---
 
+## 📝 License
 
-
-CHECK LIST
-dynamic DONE
-static DONE
-Perodic NOT
-Water level DONE
-SEA LEVEL NONED
+This project is licensed under the MIT License.
