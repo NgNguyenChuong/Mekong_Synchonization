@@ -267,7 +267,7 @@ def merge_dynamic_datasets():
         final_df = final_df.reset_index()
         
         # 3. Lưu kết quả
-        output_csv = os.path.join(DATA_PROCESSED, "FINAL_MERGED_DATASET.csv")
+        output_csv = os.path.join(DATA_PROCESSED, "DYNAMIC_MERGE.csv")
         # output_parquet = os.path.join(DATA_PROCESSED, "FINAL_MERGED_DATASET.parquet")
         
         print(f"   💾 Saving to {output_csv}...")
@@ -334,54 +334,45 @@ def extract_static_generic(spec_name, spec_config, h3_data_bundle, raw_root_dir)
     # LOGIC 2: Tính khoảng cách ngắn nhất đến sông VÀ Tỷ lệ % nước
     # -------------------------------------------------------------
     elif method == "min_distance":
-        print(f"   🌊 Đang tính toán khoảng cách sông và tỷ lệ mặt nước...")
-        
-        # 1. TÍNH TỶ LỆ NƯỚC (Vì file là 0 và 1, nên 'mean' chính là tỷ lệ %)
+        print(f"   🌊 Đang tính khoảng cách tới ô H3 có tỷ lệ nước > 40%...")
+
+        # 1. TÍNH TỶ LỆ NƯỚC CHO TỪNG Ô H3
         water_stats = zonal_stats(gdf, file_path, stats="mean")
         water_fractions = np.array([
-            s['mean'] if s['mean'] is not None else 0.0 
+            s['mean'] if s and s.get('mean') is not None else 0.0
             for s in water_stats
         ])
-        
-        # Những ô có nước (tỷ lệ > 0)
-        has_water_mask = water_fractions > 0.05
 
-        # 2. CHUẨN BỊ ĐO KHOẢNG CÁCH BẰNG KDTREE
-        with rasterio.open(file_path) as src:
-            data = src.read(1)
-            nodata = src.nodata
-            
-            if nodata is not None:
-                river_mask = (data == 1) & (data != nodata)
-            else:
-                river_mask = (data == 1)
-                
-            rows, cols = np.where(river_mask)
-            
-            if len(rows) == 0:
-                print("   ⚠️ Lỗi: Không có pixel sông nào trong file TIF.")
-                vals = [np.nan] * len(h3_ids)
-            else:
-                # Tìm tọa độ sông và xây cây KDTree
-                xs, ys = rasterio.transform.xy(src.transform, rows, cols)
-                river_coords = np.column_stack((xs, ys))
-                tree = cKDTree(river_coords)
-                
-                # Tìm tọa độ tâm H3 và đo khoảng cách
-                centroids = gdf.geometry.centroid
-                h3_coords = np.column_stack((centroids.x, centroids.y))
-                dists, _ = tree.query(h3_coords)
-                
-                # Quy đổi ra km
-                if src.crs and src.crs.is_geographic:
-                    vals = dists * 111.32 
-                else:
-                    vals = dists / 1000.0
-                    
-                # 3. KẾT HỢP LOGIC: Ép khoảng cách = 0 cho những ô đã có nước
-                vals = np.where(has_water_mask, 0.0, vals)
-                    
-        print(f"   ✅ Xong! (Khoảng cách TB: {np.nanmean(vals):.2f} km | Ô có nước: {has_water_mask.sum()}/{len(h3_ids)})")
+        # Ô H3 được xem là "ô nước" khi tỷ lệ nước > 40%
+        water_threshold = 0.40
+        has_water_mask = water_fractions > water_threshold
+
+        # 2. ĐO KHOẢNG CÁCH TỪ MỌI Ô H3 ĐẾN Ô H3 NƯỚC GẦN NHẤT (KDTree)
+        if not has_water_mask.any():
+            print("   ⚠️ Cảnh báo: Không có ô H3 nào có tỷ lệ nước > 40%.")
+            vals = np.full(len(h3_ids), np.nan)
+        else:
+            # Dùng CRS metric để khoảng cách Euclidean có ý nghĩa theo mét
+            gdf_metric = gdf.to_crs(epsg=3857)
+            centroids = gdf_metric.geometry.centroid
+            h3_coords = np.column_stack((centroids.x, centroids.y))
+
+            water_h3_coords = h3_coords[has_water_mask]
+            tree = cKDTree(water_h3_coords)
+            dists_m, _ = tree.query(h3_coords, k=1)
+
+            # Đổi từ mét sang km
+            vals = dists_m / 1000.0
+
+            # Ép khoảng cách = 0 cho các ô đã là ô nước
+            vals = np.where(has_water_mask, 0.0, vals)
+
+        mean_dist = np.nanmean(vals) if np.isfinite(vals).any() else np.nan
+        print(
+            f"   ✅ Xong! (Ngưỡng nước > {water_threshold:.0%} | "
+            f"Khoảng cách TB: {mean_dist:.2f} km | "
+            f"Ô nước: {has_water_mask.sum()}/{len(h3_ids)})"
+        )
         
         # 4. LƯU CẢ 2 CỘT VÀO FILE H3_RIVER.CSV
         return pd.DataFrame({
@@ -423,7 +414,7 @@ def process_single_static_dataset(args):
     return key
 
 def merge_static_datasets():
-    """Gộp các file tĩnh riêng lẻ thành file DIM_H3_STATIC.csv.
+    """Gộp các file tĩnh riêng lẻ thành file STATIC_MERGED.csv.
     JOIN key: h3_index"""
     print("\n🔄 [MERGE-STATIC] Bắt đầu gộp các file dữ liệu tĩnh...")
     dfs = []
@@ -438,7 +429,7 @@ def merge_static_datasets():
 
     if dfs:
         final_static_df = pd.concat(dfs, axis=1, join='outer').reset_index()
-        out_path = os.path.join(DATA_PROCESSED, "DIM_H3_STATIC.csv")
+        out_path = os.path.join(DATA_PROCESSED, "STATIC_MERGED.csv")
         final_static_df.to_csv(out_path, index=False)
         print(f"✅ [DONE] Đã lưu bảng danh mục tĩnh tại: {out_path} ({final_static_df.shape})")
     else:

@@ -11,7 +11,7 @@ import pandas as pd
 # Load các đường dẫn từ config
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(root_dir)
-from config import CRS_WGS84, DATA_PROCESSED, H3_GRID_GEOJSON, SHAPEFILE_CLEAN
+from src.config import CRS_WGS84, DATA_PROCESSED, H3_GRID_GEOJSON, SHAPEFILE_CLEAN
 
 
 def _guess_value_column(df):
