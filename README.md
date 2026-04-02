@@ -108,7 +108,8 @@ data/raw/
 
 ### Point Sampling (Dynamic Data)
 ```
-    H3 He_______.______ xagon
+        H3 Hexagon
+         _______.______ 
         ╱              ╲
        .                .
       ╱                  ╲    . cen = Centroid (primary sampling point)

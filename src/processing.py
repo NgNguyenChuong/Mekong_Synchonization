@@ -267,7 +267,7 @@ def merge_dynamic_datasets():
         final_df = final_df.reset_index()
         
         # 3. Lưu kết quả
-        output_csv = os.path.join(DATA_PROCESSED, "FINAL_MERGED_DATASET.csv")
+        output_csv = os.path.join(DATA_PROCESSED, "DYNAMIC_MERGE.csv")
         # output_parquet = os.path.join(DATA_PROCESSED, "FINAL_MERGED_DATASET.parquet")
         
         print(f"   💾 Saving to {output_csv}...")
@@ -423,7 +423,7 @@ def process_single_static_dataset(args):
     return key
 
 def merge_static_datasets():
-    """Gộp các file tĩnh riêng lẻ thành file DIM_H3_STATIC.csv.
+    """Gộp các file tĩnh riêng lẻ thành file STATIC_MERGED.csv.
     JOIN key: h3_index"""
     print("\n🔄 [MERGE-STATIC] Bắt đầu gộp các file dữ liệu tĩnh...")
     dfs = []
@@ -438,7 +438,7 @@ def merge_static_datasets():
 
     if dfs:
         final_static_df = pd.concat(dfs, axis=1, join='outer').reset_index()
-        out_path = os.path.join(DATA_PROCESSED, "DIM_H3_STATIC.csv")
+        out_path = os.path.join(DATA_PROCESSED, "STATIC_MERGED.csv")
         final_static_df.to_csv(out_path, index=False)
         print(f"✅ [DONE] Đã lưu bảng danh mục tĩnh tại: {out_path} ({final_static_df.shape})")
     else:
