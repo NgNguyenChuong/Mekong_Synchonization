@@ -21,6 +21,29 @@ from src.config import (
 )
 
 
+def _apply_map_style(ax):
+    """Apply consistent map style so figures look uniform."""
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.grid(True, linestyle='--', alpha=0.5)
+    ax.set_aspect('equal', adjustable='box')
+
+
+def _combined_bounds(*gdfs, padding_ratio=0.02):
+    """Return shared bounds for multiple GeoDataFrames with small padding."""
+    minx = min(gdf.total_bounds[0] for gdf in gdfs)
+    miny = min(gdf.total_bounds[1] for gdf in gdfs)
+    maxx = max(gdf.total_bounds[2] for gdf in gdfs)
+    maxy = max(gdf.total_bounds[3] for gdf in gdfs)
+
+    dx = maxx - minx
+    dy = maxy - miny
+    pad_x = dx * padding_ratio if dx > 0 else 0.01
+    pad_y = dy * padding_ratio if dy > 0 else 0.01
+
+    return (minx - pad_x, maxx + pad_x, miny - pad_y, maxy + pad_y)
+
+
 def plot_raw_shapefile(ax=None, show=False):
     """Vẽ shapefile raw (boundary_input.shp)"""
     gdf = gpd.read_file(SHAPEFILE_RAW)
@@ -30,9 +53,7 @@ def plot_raw_shapefile(ax=None, show=False):
     
     gdf.plot(ax=ax, edgecolor='red', facecolor='lightcoral', alpha=0.5, linewidth=1.5)
     ax.set_title("Raw Boundary (boundary_input.shp)", fontsize=14, fontweight='bold')
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.grid(True, linestyle='--', alpha=0.5)
+    _apply_map_style(ax)
     
     if show:
         plt.tight_layout()
@@ -50,9 +71,7 @@ def plot_clean_shapefile(ax=None, show=False):
     
     gdf.plot(ax=ax, edgecolor='blue', facecolor='lightblue', alpha=0.5, linewidth=1.5)
     ax.set_title("Clean Boundary (boundary_clean.shp)", fontsize=14, fontweight='bold')
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.grid(True, linestyle='--', alpha=0.5)
+    _apply_map_style(ax)
     
     if show:
         plt.tight_layout()
@@ -70,9 +89,7 @@ def plot_h3_grid(ax=None, show=False):
     
     gdf.plot(ax=ax, edgecolor='green', facecolor='lightgreen', alpha=0.4, linewidth=0.5)
     ax.set_title(f"H3 Grid ({len(gdf)} cells)", fontsize=14, fontweight='bold')
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.grid(True, linestyle='--', alpha=0.5)
+    _apply_map_style(ax)
     
     if show:
         plt.tight_layout()
@@ -84,6 +101,12 @@ def plot_h3_grid(ax=None, show=False):
 def plot_all_maps(save_path=None):
     """Vẽ tất cả 3 bản đồ cạnh nhau"""
     fig, axes = plt.subplots(1, 3, figsize=(18, 8))
+
+    # Load once to compute shared display bounds for visual consistency.
+    gdf_raw = gpd.read_file(SHAPEFILE_RAW)
+    gdf_clean = gpd.read_file(SHAPEFILE_CLEAN)
+    gdf_h3 = gpd.read_file(H3_GRID_GEOJSON)
+    x_min, x_max, y_min, y_max = _combined_bounds(gdf_raw, gdf_clean, gdf_h3)
     
     # Plot raw shapefile
     plot_raw_shapefile(ax=axes[0])
@@ -93,12 +116,16 @@ def plot_all_maps(save_path=None):
     
     # Plot H3 grid
     plot_h3_grid(ax=axes[2])
+
+    for ax in axes:
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
     
     plt.suptitle("Mekong DGGS - Map Visualization", fontsize=16, fontweight='bold', y=1.02)
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150)
         print(f"Saved figure to: {save_path}")
     
     plt.show()
@@ -127,14 +154,16 @@ def plot_comparison(save_path=None):
     ax.legend(handles=legend_elements, loc='upper right', fontsize=10)
     
     ax.set_title("Comparison: Raw vs Clean vs H3 Grid", fontsize=14, fontweight='bold')
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.grid(True, linestyle='--', alpha=0.5)
+    _apply_map_style(ax)
+
+    x_min, x_max, y_min, y_max = _combined_bounds(gdf_raw, gdf_clean, gdf_h3)
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
     
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150)
         print(f"Saved figure to: {save_path}")
     
     plt.show()
@@ -155,10 +184,10 @@ if __name__ == "__main__":
     
     # Vẽ tất cả các bản đồ riêng biệt
     print("\n[1/2] Plotting all maps side by side...")
-    plot_all_maps(save_path=os.path.join(output_dir, "all_maps.png"))
+    plot_all_maps(save_path=os.path.join(output_dir, "all_maps2.png"))
     
     # Vẽ so sánh chồng lớp
     print("\n[2/2] Plotting comparison overlay...")
-    plot_comparison(save_path=os.path.join(output_dir, "comparison.png"))
+    plot_comparison(save_path=os.path.join(output_dir, "comparison2.png"))
     
     print("\n✓ Done! Figures saved to:", output_dir)
