@@ -98,37 +98,56 @@ def plot_h3_grid(ax=None, show=False):
     return ax
 
 
-def plot_all_maps(save_path=None):
-    """Vẽ tất cả 3 bản đồ cạnh nhau"""
-    fig, axes = plt.subplots(1, 3, figsize=(18, 8))
+def plot_all_maps(save_dir=None):
+    """Vẽ và lưu 3 bản đồ riêng biệt thay vì ghép thành một figure."""
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
 
-    # Load once to compute shared display bounds for visual consistency.
     gdf_raw = gpd.read_file(SHAPEFILE_RAW)
     gdf_clean = gpd.read_file(SHAPEFILE_CLEAN)
     gdf_h3 = gpd.read_file(H3_GRID_GEOJSON)
     x_min, x_max, y_min, y_max = _combined_bounds(gdf_raw, gdf_clean, gdf_h3)
-    
-    # Plot raw shapefile
-    plot_raw_shapefile(ax=axes[0])
-    
-    # Plot clean shapefile
-    plot_clean_shapefile(ax=axes[1])
-    
-    # Plot H3 grid
-    plot_h3_grid(ax=axes[2])
 
-    for ax in axes:
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
-    
-    plt.suptitle("Mekong DGGS - Map Visualization", fontsize=16, fontweight='bold', y=1.02)
+    outputs = []
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    plot_raw_shapefile(ax=ax)
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
     plt.tight_layout()
-    
-    if save_path:
-        plt.savefig(save_path, dpi=150)
-        print(f"Saved figure to: {save_path}")
-    
-    plt.show()
+    if save_dir:
+        raw_path = os.path.join(save_dir, "raw_boundary.png")
+        fig.savefig(raw_path, dpi=150, bbox_inches="tight")
+        outputs.append(raw_path)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    plot_clean_shapefile(ax=ax)
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    plt.tight_layout()
+    if save_dir:
+        clean_path = os.path.join(save_dir, "clean_boundary.png")
+        fig.savefig(clean_path, dpi=150, bbox_inches="tight")
+        outputs.append(clean_path)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    plot_h3_grid(ax=ax)
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    plt.tight_layout()
+    if save_dir:
+        h3_path = os.path.join(save_dir, "h3_grid.png")
+        fig.savefig(h3_path, dpi=150, bbox_inches="tight")
+        outputs.append(h3_path)
+    plt.close(fig)
+
+    if outputs:
+        for path in outputs:
+            print(f"Saved figure to: {path}")
+
+    return outputs
 
 
 def plot_comparison(save_path=None):
@@ -182,9 +201,10 @@ if __name__ == "__main__":
     output_dir = os.path.join(DATA_PROCESSED, "figures")
     os.makedirs(output_dir, exist_ok=True)
     
-    # Vẽ tất cả các bản đồ riêng biệt
-    print("\n[1/2] Plotting all maps side by side...")
-    plot_all_maps(save_path=os.path.join(output_dir, "all_maps2.png"))
+    # Vẽ và lưu 3 bản đồ riêng biệt trong folder all_maps2
+    all_maps_dir = os.path.join(output_dir, "all_maps2")
+    print("\n[1/2] Plotting individual maps into all_maps2/...")
+    plot_all_maps(save_dir=all_maps_dir)
     
     # Vẽ so sánh chồng lớp
     print("\n[2/2] Plotting comparison overlay...")

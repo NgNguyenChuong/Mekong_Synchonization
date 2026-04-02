@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Draw the path from one H3 cell centroid to the nearest river pixel."""
+"""Draw the path from one H3 cell centroid to the nearest H3 cell with high water fraction."""
 
 import argparse
 import os
@@ -8,10 +8,8 @@ import sys
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
-import rasterio
-from matplotlib.colors import ListedColormap
+import pandas as pd
 from matplotlib.patches import Patch, FancyArrowPatch
-from rasterio.plot import plotting_extent
 from scipy.spatial import cKDTree
 
 
@@ -22,8 +20,10 @@ from src.config import DATA_RAW, DATA_PROCESSED, H3_GRID_GEOJSON, SHAPEFILE_CLEA
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Draw a path from one H3 cell to the nearest river pixel")
+    parser = argparse.ArgumentParser(description="Draw a path from one H3 cell to the nearest high-water H3 cell")
     parser.add_argument("--h3-index", default=None, help="Target H3 index. If omitted, the first cell in the grid is used.")
+    parser.add_argument("--csv", default=os.path.join(DATA_PROCESSED, "h3_river.csv"), help="Path to H3 river CSV output")
+    parser.add_argument("--threshold", type=float, default=0.4, help="Water fraction threshold for water H3 cells (default: 0.40)")
     parser.add_argument("--save", default=os.path.join(DATA_PROCESSED, "figures", "h3_to_river_path.png"), help="Output image path")
     parser.add_argument("--no-show", action="store_true", help="Save only, do not display")
     return parser.parse_args()
@@ -49,32 +49,27 @@ def load_grid():
     return gdf
 
 
-def load_river_raster():
-    tif_path = os.path.join(DATA_RAW, "river", "River_DBSCL.tif")
-    if not os.path.exists(tif_path):
-        raise FileNotFoundError(f"Không tìm thấy file: {tif_path}")
+def load_river_h3_csv(csv_path):
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Không tìm thấy file: {csv_path}")
 
-    with rasterio.open(tif_path) as src:
-        data = src.read(1)
-        extent = plotting_extent(src)
-        nodata = src.nodata
-        crs = src.crs
-        transform = src.transform
+    df = np.genfromtxt(csv_path, delimiter=",", names=True, dtype=None, encoding="utf-8")
+    if df.size == 0:
+        raise ValueError(f"File CSV rỗng: {csv_path}")
 
-    if nodata is not None:
-        river_mask = (data == 1) & (data != nodata)
+    cols = set(df.dtype.names or [])
+    required = {"h3_index", "river_proximity_fraction"}
+    if not required.issubset(cols):
+        raise ValueError(f"CSV thiếu cột bắt buộc: {sorted(required - cols)}")
+
+    if df.shape == ():
+        h3_values = np.array([str(df["h3_index"])])
+        frac_values = np.array([float(df["river_proximity_fraction"])])
     else:
-        river_mask = (data == 1)
+        h3_values = np.array([str(v) for v in df["h3_index"]])
+        frac_values = df["river_proximity_fraction"].astype(float)
 
-    rows, cols = np.where(river_mask)
-    if len(rows) == 0:
-        raise ValueError("Không tìm thấy pixel sông nào trong raster.")
-
-    with rasterio.open(tif_path) as src:
-        xs, ys = rasterio.transform.xy(src.transform, rows, cols)
-
-    river_coords = np.column_stack((xs, ys))
-    return tif_path, data, extent, river_mask, river_coords, crs, transform
+    return h3_values, frac_values
 
 
 def pick_target_h3(grid, h3_index):
@@ -86,10 +81,10 @@ def pick_target_h3(grid, h3_index):
     return grid.iloc[0]
 
 
-def nearest_river_point(centroid_xy, river_coords):
-    tree = cKDTree(river_coords)
-    distance, index = tree.query([centroid_xy])
-    return river_coords[index[0]], float(distance[0])
+def nearest_water_h3(target_point, water_points):
+    tree = cKDTree(water_points)
+    distance, index = tree.query([target_point], k=1)
+    return int(index[0]), float(distance[0])
 
 
 def main():
@@ -97,42 +92,69 @@ def main():
 
     grid = load_grid()
     boundary = load_boundary()
-    tif_path, river_data, extent, river_mask, river_coords, crs, transform = load_river_raster()
+    csv_h3, csv_fraction = load_river_h3_csv(args.csv)
 
-    target_row = pick_target_h3(grid, args.h3_index)
+    river_df = pd.DataFrame(
+        {"h3_index": csv_h3, "river_proximity_fraction": csv_fraction}
+    )
+    merged = grid.merge(river_df[["h3_index", "river_proximity_fraction"]], on="h3_index", how="left")
+    merged["river_proximity_fraction"] = merged["river_proximity_fraction"].fillna(0.0)
+
+    target_row = pick_target_h3(merged, args.h3_index)
     target_geom = target_row.geometry
-    centroid = target_geom.centroid
-    centroid_xy = (centroid.x, centroid.y)
-    nearest_xy, distance_raw = nearest_river_point(centroid_xy, river_coords)
+    target_id = target_row["h3_index"]
 
-    if crs and crs.is_geographic:
-        distance_km = distance_raw * 111.32
-    else:
-        distance_km = distance_raw / 1000.0
+    water_mask = merged["river_proximity_fraction"] > args.threshold
+    water_cells = merged[water_mask].copy()
+    if water_cells.empty:
+        raise ValueError(f"Không có ô H3 nào có tỷ lệ nước > {args.threshold:.0%}")
 
-    selected = grid[grid["h3_index"] == target_row["h3_index"]]
-    others = grid[grid["h3_index"] != target_row["h3_index"]]
+    merged_metric = merged.to_crs(epsg=3857)
+    water_metric = merged_metric[merged_metric["h3_index"].isin(water_cells["h3_index"])].copy()
+    target_metric = merged_metric[merged_metric["h3_index"] == target_id]
+
+    target_centroid_metric = target_metric.geometry.iloc[0].centroid
+    water_centroids_metric = water_metric.geometry.centroid
+    water_points_metric = np.column_stack((water_centroids_metric.x, water_centroids_metric.y))
+
+    nearest_idx, distance_m = nearest_water_h3(
+        (target_centroid_metric.x, target_centroid_metric.y),
+        water_points_metric,
+    )
+    nearest_h3_id = water_metric.iloc[nearest_idx]["h3_index"]
+    distance_km = distance_m / 1000.0
+
+    selected = merged[merged["h3_index"] == target_id]
+    water_all = merged[water_mask].copy()
+    water_highlight = merged[merged["h3_index"] == nearest_h3_id]
+    others = merged[(~water_mask) & (~merged["h3_index"].isin([target_id, nearest_h3_id]))]
+
+    target_centroid = selected.geometry.iloc[0].centroid
+    nearest_centroid = water_highlight.geometry.iloc[0].centroid
 
     fig, ax = plt.subplots(figsize=(13, 11))
     ax.set_facecolor("#f7f7f7")
-
-    # Raster river background
-    cmap = ListedColormap(["#f8f9fa", "#1d4ed8"])
-    ax.imshow(np.ma.masked_invalid(river_data), cmap=cmap, extent=extent, origin="upper", alpha=0.85)
 
     # Optional boundary overlay
     if boundary is not None:
         boundary.plot(ax=ax, facecolor="none", edgecolor="#444444", linewidth=1.0, alpha=0.8)
 
-    # All H3 cells faint, selected cell emphasized
+    # All non-water cells faint
     if not others.empty:
         others.plot(ax=ax, facecolor="none", edgecolor="#9ca3af", linewidth=0.15, alpha=0.35)
-    selected.plot(ax=ax, facecolor="none", edgecolor="#ef4444", linewidth=1, alpha=1.0)
 
-    # Draw the path from centroid to nearest river pixel
+    # Draw all high-water cells
+    if not water_all.empty:
+        water_all.plot(ax=ax, facecolor="#93c5fd", edgecolor="#60a5fa", linewidth=0.3, alpha=0.45)
+
+    # Selected and nearest-water cells emphasized
+    selected.plot(ax=ax, facecolor="none", edgecolor="#ef4444", linewidth=1, alpha=1.0)
+    water_highlight.plot(ax=ax, facecolor="none", edgecolor="#1d4ed8", linewidth=1, alpha=1.0)
+
+    # Draw the path from centroid to nearest high-water H3 centroid
     path_arrow = FancyArrowPatch(
-        (centroid.x, centroid.y),
-        (nearest_xy[0], nearest_xy[1]),
+        (target_centroid.x, target_centroid.y),
+        (nearest_centroid.x, nearest_centroid.y),
         arrowstyle="->",
         mutation_scale=5,
         linewidth=1,
@@ -142,28 +164,12 @@ def main():
     )
     ax.add_patch(path_arrow)
 
-    step_text = (
-        "Các bước tính:\n"
-        "1) Lấy centroid của ô H3\n"
-        "2) Tìm pixel sông gần nhất\n"
-        "3) Nối 2 điểm bằng đường thẳng\n"
-        "4) Đổi sang km và trả kết quả"
-    )
-    ax.text(
-        0.02,
-        0.02,
-        step_text,
-        transform=ax.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=10.5,
-        color="#111827",
-        bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="#d1d5db", alpha=0.96),
-    )
-
     info_text = (
-        f"H3: {target_row['h3_index']}\n"
-        f"Nearest river: {distance_km:.2f} km"
+        f"H3 nguồn: {target_id}\n"
+        f"H3 nước gần nhất: {nearest_h3_id}\n"
+        f"Ngưỡng nước: > {args.threshold:.0%}\n"
+        f"Số ô nước: {len(water_all)}\n"
+        f"Khoảng cách: {distance_km:.2f} km"
     )
     ax.text(
         0.02,
@@ -178,13 +184,15 @@ def main():
         bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="#d1d5db", alpha=0.96),
     )
 
-    ax.set_title("Đường đi từ ô H3 tới sông gần nhất", fontsize=18, fontweight="bold", color="#102542")
+    ax.set_title("Đường đi từ ô H3 tới ô H3 có tỷ lệ nước cao", fontsize=18, fontweight="bold", color="#102542")
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])
 
     legend_handles = [
+        Patch(facecolor="#93c5fd", edgecolor="#1d4ed8", label="All water H3 (> threshold)"),
         Patch(facecolor="#ef4444", edgecolor="#7f1d1d", label="Selected H3"),
+        Patch(facecolor="#1d4ed8", edgecolor="#1e3a8a", label="Nearest water H3 (> threshold)"),
     ]
     ax.legend(handles=legend_handles, loc="lower left", frameon=True)
 

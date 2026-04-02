@@ -71,6 +71,16 @@ def load_daily_csv(csv_name):
     return pd.read_csv(csv_path, dtype={"h3_index": str})
 
 
+def build_output_paths(save_path):
+    base, ext = os.path.splitext(save_path)
+    if not ext:
+        ext = ".png"
+    return {
+        "raster": f"{base}_raster{ext}",
+        "h3": f"{base}_h3{ext}",
+    }
+
+
 def read_daily_band(tif_path, target_date):
     day_index = target_date.day
     with rasterio.open(tif_path) as src:
@@ -136,12 +146,27 @@ def main():
     norm = Normalize(vmin=vmin, vmax=vmax)
     cmap = "viridis"
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 9))
+    output_paths = build_output_paths(args.save)
 
-    im = ax1.imshow(tif_data, cmap=cmap, norm=norm, extent=extent, origin="upper")
+    # Figure 1: raw daily raster
+    fig1, ax1 = plt.subplots(figsize=(12, 9))
+    ax1.imshow(tif_data, cmap=cmap, norm=norm, extent=extent, origin="upper")
     ax1.set_title(f"{os.path.basename(tif_path)} | band {target_date.day} | {date_str}")
     ax1.axis("off")
 
+    sm1 = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm1.set_array([])
+    cbar1 = fig1.colorbar(sm1, ax=ax1, fraction=0.03, pad=0.02)
+    cbar1.set_label(value_col)
+
+    plt.tight_layout()
+    if args.save:
+        os.makedirs(os.path.dirname(output_paths["raster"]), exist_ok=True)
+        fig1.savefig(output_paths["raster"], dpi=150, bbox_inches="tight")
+        print(f"✅ Đã lưu ảnh: {output_paths['raster']}")
+
+    # Figure 2: H3-assigned values
+    fig2, ax2 = plt.subplots(figsize=(12, 9))
     merged.plot(
         ax=ax2,
         column=value_col,
@@ -154,17 +179,16 @@ def main():
     ax2.set_title(f"H3 assigned values | {value_col} | {date_str}")
     ax2.axis("off")
 
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
-    cbar = fig.colorbar(sm, ax=[ax1, ax2], fraction=0.03, pad=0.02)
-    cbar.set_label(value_col)
+    sm2 = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm2.set_array([])
+    cbar2 = fig2.colorbar(sm2, ax=ax2, fraction=0.03, pad=0.02)
+    cbar2.set_label(value_col)
 
     plt.tight_layout()
-
     if args.save:
-        os.makedirs(os.path.dirname(args.save), exist_ok=True)
-        plt.savefig(args.save, dpi=150, bbox_inches="tight")
-        print(f"✅ Đã lưu ảnh: {args.save}")
+        os.makedirs(os.path.dirname(output_paths["h3"]), exist_ok=True)
+        fig2.savefig(output_paths["h3"], dpi=150, bbox_inches="tight")
+        print(f"✅ Đã lưu ảnh: {output_paths['h3']}")
 
     if not args.no_show:
         plt.show()
